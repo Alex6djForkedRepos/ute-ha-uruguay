@@ -1,7 +1,106 @@
 # UTE Mobile API — Protocol Reference
 
-> **Versión:** v0 (derivado por lectura del upstream `gustavoqzdaa/ute_energy@master`, último update 2023-06).
-> **Estado:** Sin validar contra captura real. Marcas `[TBD]` indican datos que esperamos confirmar/corregir cuando capturemos tráfico de la app real (`uy.com.ute.customers` v1.0.40 en el OnePlus 12).
+> **Versión:** v0.5 (lectura upstream 2023 + análisis estático del `libapp.so` v1.0.40, 2026-05-04).
+> **Estado:** El upstream-2023 ya **NO refleja el protocolo real**. La app es Flutter (Dart-AOT compilado a `libapp.so`), migró a OAuth 2.0, y cambió el base-path a `/customersapp/`. Las secciones marcadas `[OBSOLETO]` son del upstream-2023 y se mantienen como referencia histórica; las marcadas `[NUEVO]` salen del análisis estático y serán confirmadas con captura mitm.
+
+## ⚠️ Cambios estructurales desde el upstream
+
+| | upstream-2023 (`gustavoqzdaa/ute_energy`) | app real v1.0.40 |
+|---|---|---|
+| Stack app | Java/Kotlin nativa | **Flutter** (Dart-AOT en `libapp.so`) |
+| Base API | `https://rocme.ute.com.uy/api/` | `https://rocme.ute.com.uy/customersapp/` |
+| Auth model | email + phone + OTP custom (UTE-only) | **OAuth 2.0 / OIDC federado** contra ID Uruguay (AGESIC) |
+| IdP | UTE (custom) | **`auth.iduruguay.gub.uy`** (gob. UY) |
+| Token format | bearer opaco | **JWT firmado por id.gub.uy** (RS256) |
+| Smart meter ext. | sólo medidores propios | + **Shelly Cloud** (`/customersapp/device/shelly/tokenize/...`) |
+
+## Auth: OIDC contra ID Uruguay (gub.uy)
+
+UTE delegó toda la autenticación a **ID Uruguay**, el SSO nacional uruguayo operado por AGESIC. Esto se confirma con:
+
+- Logo `assets/flutter_assets/assets/images/ext-oidc-logo.png` = escudo oficial **`gub.uy`**.
+- Constantes Dart en `libapp.so`: `gubUyClient`, `gubUySecret`, `gubUyAuthEndpoint`, `gubUyTokenEndpoint`.
+- App Link de retorno declarado en `AndroidManifest.xml`: `https://clientes.ute.com.uy/mobileapp` (`autoVerify="true"`).
+- `assetlinks.json` en `clientes.ute.com.uy/.well-known/` lista 3 SHA-256 fingerprints de la firma original UTE.
+
+### OIDC Discovery (producción, fetched 2026-05-04)
+
+```
+GET https://auth.iduruguay.gub.uy/oidc/v1/.well-known/openid-configuration
+```
+
+| Endpoint | URL |
+|---|---|
+| Issuer | `https://auth.iduruguay.gub.uy` |
+| Authorization | `https://auth.iduruguay.gub.uy/oidc/v1/authorize` |
+| Token | `https://auth.iduruguay.gub.uy/oidc/v1/token` |
+| UserInfo | `https://auth.iduruguay.gub.uy/oidc/v1/userinfo` |
+| JWKS | `https://auth.iduruguay.gub.uy/oidc/v1/jwks` |
+| Logout | `https://auth.iduruguay.gub.uy/oidc/v1/logout` |
+
+- `response_types_supported`: `["code"]` (Authorization Code Flow)
+- `id_token_signing_alg`: `RS256`, `HS256`
+- `scopes_supported`: `openid`, `personal_info`, `email`, `document`, `profile`
+- `acr_values`: `urn:iduruguay:nid:{0..3}` (Niveles de aseguramiento de identidad)
+- Auth en `/token`: **HTTP Basic** con `client_id:client_secret` (NO PKCE).
+- Token TTL por defecto: 60 minutos. Refresh manual.
+- Custom claims útiles para UTE: `numero_documento`, `tipo_documento`, `pais_documento`, `nombre_completo`, `primer_apellido`, `email`, `rid`.
+
+### Flujo de auth de la app UTE (inferido)
+
+```
+┌───────────────┐   1. user toca "Ingresar"   ┌──────────────────────┐
+│ App UTE       │ ──────────────────────────▶ │ Custom Tab / browser │
+└───────────────┘                              └──────────┬───────────┘
+                                                          │ 2. GET /oidc/v1/authorize
+                                                          ▼
+                          ┌────────────────────────────────────────────────────┐
+                          │ auth.iduruguay.gub.uy                              │
+                          │   /oidc/v1/authorize?                              │
+                          │     response_type=code                             │
+                          │     client_id=<gubUyClient>            ← desconocido│
+                          │     redirect_uri=https://clientes.ute.com.uy/mobileapp│
+                          │     scope=openid+personal_info+document+email      │
+                          │     state=<random>                                 │
+                          │     [acr_values=urn:iduruguay:nid:1|2]             │
+                          └────────────────────────────────────────────────────┘
+                                                          │ 3. user autentica (CI + clave / SMS / cédula)
+                                                          ▼
+                          302 → https://clientes.ute.com.uy/mobileapp?code=…&state=…
+                                                          │
+                          App captura el redirect via App Link autoVerify
+                                                          ▼
+┌───────────────┐   4. POST /oidc/v1/token            ┌──────────────────────┐
+│ App UTE       │ ──────────────────────────────────▶ │ auth.iduruguay.gub.uy│
+│  Basic auth:  │                                     │ devuelve JWT (id+    │
+│   client_id:  │                                     │   access_token)      │
+│   client_secret│ ◀──────────────────────────────────│                      │
+└───────────────┘                                     └──────────────────────┘
+                                                          │
+                    5. GET https://rocme.ute.com.uy/customersapp/...
+                       Authorization: Bearer <access_token JWT>
+```
+
+### Lo que falta confirmar ([TBD] críticos)
+
+- **`client_id` exacto de UTE** (`gubUyClient`) — está hardcoded en `libapp.so` pero como string concatenada no aparece en `strings`. Se obtiene capturando la URL `/authorize` cuando la app abre el Custom Tab.
+- **`client_secret`** (`gubUySecret`) — idem, hardcoded en `libapp.so`. Necesario para `/oidc/v1/token` con HTTP Basic. Implica que la app es "confidential client" según la spec OIDC, aunque mobile RPs deberían ser public clients con PKCE — decisión cuestionable de AGESIC/UTE.
+- **scopes solicitados por UTE** (subset de los 5 disponibles).
+- **`acr_values`** (nivel de aseguramiento exigido por UTE).
+- **Si UTE valida directamente el JWT de id.gub.uy** o si lo intercambia por su propio token contra `/customersapp/...`.
+
+## Bloqueo actual: anti-tamper Dart-side
+
+La app implementa un check de integridad a nivel Dart que loguea `is tampered: true` cuando la firma SHA-256 del APK no coincide con una de las 3 firmas válidas declaradas en `https://clientes.ute.com.uy/.well-known/assetlinks.json`. Apenas `is tampered=true`, la app cierra la `MainActivity` antes de hacer cualquier request.
+
+Implicación: `apk-mitm` (que inyecta un `network_security_config` permisivo y resigna con cert debug) **no es suficiente** para esta app. Hay tres caminos para desbloquear:
+
+1. **Frida-gadget + objection patchapk**: re-empacar el APK con Frida-gadget y un script que hookee la función Dart que devuelve `is tampered`. Requiere localizar el offset en el `libapp.so` AOT — más laborioso pero estándar.
+2. **Capturar sólo la URL de `/authorize`** desde la app oficial sin patchar, leyendo `adb logcat` del tag de Chrome/Custom Tab. Eso da `client_id` + `redirect_uri` + scopes pero NO el `client_secret`.
+3. **Saltar la app móvil**: implementar la integración HA usando el flujo web de `https://clientes.ute.com.uy` (login interactivo en browser, persistir cookies/session, scrape del backend). Requiere captura de la SPA web que es trivial (sin pinning).
+
+## Sección histórica — upstream 2023 [OBSOLETO]
+
 
 Esta es una API privada usada por la app móvil de UTE. No está documentada públicamente. El propósito de este documento es habilitar reimplementaciones en cualquier stack (Python para Home Assistant, TS para volt.uy, Go, etc.).
 

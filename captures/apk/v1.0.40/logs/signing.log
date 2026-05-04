@@ -1,0 +1,84 @@
+source:
+	/tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle
+keystore:
+	[0] 161a0018 /tmp/temp_11883027388533339740_debug.keystore (DEBUG_EMBEDDED)
+
+01. base.apk
+	WARNING: already signed - will be resigned. Old certificate info: [v2, v3]
+		Subject: Subject: CN=Android Debug, OU=Android, O=US, L=US, ST=US, C=US
+		SHA256: 1e08a903aef9c3a721510b64ec764d01d3d094eb954161b62544ea8f187b5953
+
+	SIGN
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/base.apk (5.17 MiB)
+	checksum: 1318564fa249efa5c5d34f1164ace7ccbc6bf2518aad6cd586493426e0ad948b (sha256)
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::loadLibrary has been called by org.conscrypt.NativeLibraryUtil in an unnamed module (file:/home/juan/.cache/apk-mitm/uber-apk-signer-v1.3.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+	- sign success
+
+	VERIFY
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/base.apk (5.17 MiB)
+	checksum: 99110cd55eb27f5966dea9a4998b0bcf17631fe29a1eea7f5209b16e5171b66e (sha256)
+	- signature verified [v2, v3]
+		Subject: CN=Android Debug, OU=Android, O=US, L=US, ST=US, C=US
+		SHA256: 1e08a903aef9c3a721510b64ec764d01d3d094eb954161b62544ea8f187b5953 / SHA256withRSA
+		Expires: Thu Mar 10 17:10:05 GMT-03:00 2044
+
+02. split_config.arm64_v8a.apk
+	WARNING: already signed - will be resigned. Old certificate info: [v1, v2, v3]
+		Subject: Subject: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+		SHA256: 17bf24f84731e51b46b6f084def1459b0c5c741b795eb2d55a7b94991778c518
+
+	SIGN
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.arm64_v8a.apk (24.34 MiB)
+	checksum: ec7608efa39719e5376156aa1d0a89cde10087caad7dbf2d469ab8585c4dd743 (sha256)
+	- sign success
+
+	VERIFY
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.arm64_v8a.apk (24.34 MiB)
+	checksum: ee0f57c0140aa3337527487d4745bb79bb21fb98a7130b44a1e102c43051c103 (sha256)
+	- signature verified [v1, v2, v3]
+		Subject: CN=Android Debug, OU=Android, O=US, L=US, ST=US, C=US
+		SHA256: 1e08a903aef9c3a721510b64ec764d01d3d094eb954161b62544ea8f187b5953 / SHA256withRSA
+		Expires: Thu Mar 10 17:10:05 GMT-03:00 2044
+
+03. split_config.es.apk
+	WARNING: already signed - will be resigned. Old certificate info: [v1, v2, v3]
+		Subject: Subject: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+		SHA256: 17bf24f84731e51b46b6f084def1459b0c5c741b795eb2d55a7b94991778c518
+
+	SIGN
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.es.apk (0.03 MiB)
+	checksum: 31572abcd67c2c0611748da9e02bf5606dc2a8a38aa386c67b068193bb19197e (sha256)
+	- sign success
+
+	VERIFY
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.es.apk (0.02 MiB)
+	checksum: 8cbc2566ad90efdd3d4503d2b70547848ecb29ebf0399adaa37a2bb5cc93a59f (sha256)
+	- signature verified [v1, v2, v3]
+		Subject: CN=Android Debug, OU=Android, O=US, L=US, ST=US, C=US
+		SHA256: 1e08a903aef9c3a721510b64ec764d01d3d094eb954161b62544ea8f187b5953 / SHA256withRSA
+		Expires: Thu Mar 10 17:10:05 GMT-03:00 2044
+
+04. split_config.xxxhdpi.apk
+	WARNING: already signed - will be resigned. Old certificate info: [v1, v2, v3]
+		Subject: Subject: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+		SHA256: 17bf24f84731e51b46b6f084def1459b0c5c741b795eb2d55a7b94991778c518
+
+	SIGN
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.xxxhdpi.apk (0.18 MiB)
+	checksum: b386b0bd804b15b48b0fdcfbd5826572486022918942c4d26153400bc3f1b3c9 (sha256)
+	- sign success
+
+	VERIFY
+	file: /tmp/apk-mitm-dc6fee4a1e2ddba0e8848d13491bc434/bundle/split_config.xxxhdpi.apk (0.17 MiB)
+	checksum: 331cde1c9f11484754389d0147c39f5f53a7207a52e0db2538c241e7e7032513 (sha256)
+	- signature verified [v1, v2, v3]
+		Subject: CN=Android Debug, OU=Android, O=US, L=US, ST=US, C=US
+		SHA256: 1e08a903aef9c3a721510b64ec764d01d3d094eb954161b62544ea8f187b5953 / SHA256withRSA
+		Expires: Thu Mar 10 17:10:05 GMT-03:00 2044
+
+[Mon May 04 20:17:42 GMT-03:00 2026][v1.3.0]
+Successfully processed 4 APKs and 0 errors in 0.46 seconds.
