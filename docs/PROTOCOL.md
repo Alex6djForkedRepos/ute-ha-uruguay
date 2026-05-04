@@ -89,15 +89,106 @@ GET https://auth.iduruguay.gub.uy/oidc/v1/.well-known/openid-configuration
 - **`acr_values`** (nivel de aseguramiento exigido por UTE).
 - **Si UTE valida directamente el JWT de id.gub.uy** o si lo intercambia por su propio token contra `/customersapp/...`.
 
-## Bloqueo actual: anti-tamper Dart-side
+## Anti-tamper y su bypass natural
 
-La app implementa un check de integridad a nivel Dart que loguea `is tampered: true` cuando la firma SHA-256 del APK no coincide con una de las 3 firmas válidas declaradas en `https://clientes.ute.com.uy/.well-known/assetlinks.json`. Apenas `is tampered=true`, la app cierra la `MainActivity` antes de hacer cualquier request.
+La app implementa un check de integridad a nivel Dart que loguea `is tampered: true` cuando la firma SHA-256 del APK no coincide con una de las 3 firmas válidas declaradas en `https://clientes.ute.com.uy/.well-known/assetlinks.json`. Apenas `is tampered=true`, la app cierra la `MainActivity`.
 
-Implicación: `apk-mitm` (que inyecta un `network_security_config` permisivo y resigna con cert debug) **no es suficiente** para esta app. Hay tres caminos para desbloquear:
+PERO — el binario tiene un escape hatch del propio UTE:
 
-1. **Frida-gadget + objection patchapk**: re-empacar el APK con Frida-gadget y un script que hookee la función Dart que devuelve `is tampered`. Requiere localizar el offset en el `libapp.so` AOT — más laborioso pero estándar.
-2. **Capturar sólo la URL de `/authorize`** desde la app oficial sin patchar, leyendo `adb logcat` del tag de Chrome/Custom Tab. Eso da `client_id` + `redirect_uri` + scopes pero NO el `client_secret`.
-3. **Saltar la app móvil**: implementar la integración HA usando el flujo web de `https://clientes.ute.com.uy` (login interactivo en browser, persistir cookies/session, scrape del backend). Requiere captura de la SPA web que es trivial (sin pinning).
+```
+GET https://rocme.ute.com.uy/customersapp/flags/SecurityChecksBypass
+→ si el response es truthy, NO se ejecuta el integrity check
+```
+
+Strings en `libapp.so` que confirman la cadena:
+- `"flags/SecurityChecksBypass"` — el path consultado.
+- `"Error checking SecurityChecksBypass flag: "` — log del fail-open / fail-close.
+- `"Failed to perform integrity check. "` — el check propio.
+- `"is emulator: "`, `"is compromised: "`, `"is tampered: "` — los tres bools que se loguean.
+
+Es un feature flag de servidor pensado para que UTE/devs puedan deshabilitar checks en QA/staging sin recompilar. **Lo aprovechamos**: con un addon de `mitmproxy` que intercepte ese path y responda truthy, la app patcheada arranca normalmente:
+
+```python
+# tooling/security_bypass_addon.py
+def request(flow):
+    if "/flags/SecurityChecksBypass" in flow.request.path:
+        flow.response = http.Response.make(200, b'{"value":true,"data":true}',
+                                           {"content-type":"application/json"})
+```
+
+Esto evita Frida-gadget, objection-patchapk y reFlutter. La app patcheada por `apk-mitm` (cert debug) consulta el flag, recibe truthy del proxy, salta el check, y desde ahí captura mitmproxy todo el flujo con TLS desencriptado.
+
+## Endpoints descubiertos por análisis estático (blutter)
+
+`blutter` extrajo el Object Pool del Dart-AOT (Dart 3.7.2). Hay ~50+ paths del API privado. Todos relativos a `https://rocme.ute.com.uy/customersapp/`.
+
+### Cuentas / clientes
+- `customers/profile` — perfil del usuario logueado.
+- `customers/setup` — primer setup post-login.
+- `customers/loggedin` — confirmar sesión activa.
+- `customers/contact`, `customers/contact/verify` — gestión de teléfono/email.
+- `customers/event` — eventos de tracking.
+- `customers/grant/check` — chequeo de permisos sobre una cuenta (multi-suministro).
+- `customers/validate`, `customers/validate/code`, `customers/validate/omit` — validaciones via OTP/SMS.
+- `customers/updatefcmtoken` — registrar token Firebase Cloud Messaging para push.
+
+### Suministros / agreements
+- `accounts/services/peak` — horario punta del agreement (TRD/TRT).
+- `accounts/consumption/simulation` — simulador de consumo.
+- `accounts/meters/readsync` — sincronización de lectura del medidor.
+- `accounts/miConsumptionCurve/` — curva de consumo (mi-consumo, gráficos).
+- `/peak`, `/services`, `/profile`, `/category` — sub-paths de account.
+
+### Consumo y mediciones
+- `/activeconsumption/` — energía activa.
+- `/reactiveconsumption/` — energía reactiva.
+- `/powerconsumption/` — potencia.
+- `/consumption/`, `/consumption/daily/`, `/consumption/monthly/` — series temporales.
+- `/consumptionevolution/` — comparativa.
+- `/calculateConsumptionForPlan/` — what-if con otro plan tarifario.
+
+### Medidor smart / IoT
+- `/meters`, `meters/readings` — lecturas crudas del medidor.
+- `device/saveprofile` — perfil del device (probablemente de aire/calefón inteligente).
+- `device/consumptionBreakdown/` — desglose por dispositivo.
+- `device/servicepointtoplan/` — asignación device→plan.
+- `device/smartHome/` — config home assistant interno.
+- `device/shelly/tokenize/` — vincula medidor Shelly a la cuenta UTE.
+- `/poweron`, `/poweroff` — control remoto del relé del medidor.
+- `/schedule`, `/schedule/active`, `/schedule/inactive`, `/schedule/bypass` — schedules de encendido/apagado.
+
+### Facturación / pagos / cupones
+- `invoices/charts/`, `invoices/file/`, `invoices/totalDebt/`, `invoices/unpaids/` — facturas.
+- `invoices/paymentoptions` — métodos de pago disponibles.
+- `coupon/check`, `coupon/info`, `coupon/redeem`, `coupon/scan` — sistema de cupones (probable tienda UTE).
+
+### Quality of service / reclamos
+- `/status`, `/status/check` — estado del servicio.
+- `/quality` — calidad reportada.
+- `energyclaims/annul`, `energyclaims/reiterate` — reclamos por incidencias.
+
+### Mensajería / push
+- `messages/unread` — count de mensajes pendientes.
+
+### Auth / OIDC
+- `/connect/token` — endpoint propio de UTE para canjear el code de id.gub.uy o refresh (lo veremos en captura).
+- `/Account/ForgotPassword`, `/Account/Register?returnUrl=` — paths del IdP web.
+- `/mobileapp/sign-in`, `/mobileapp/register-success` — sub-paths del App Link redirect.
+
+### Operacionales
+- `flags/SecurityChecksBypass` — feature flag (ver bypass arriba).
+- `/version/` — chequeo de versión mínima de la app.
+- `/check`, `/thirdparty`, `/thirdparty/` — endpoints utility.
+
+> ⚠️ Estos paths salen del Object Pool Dart. **Falta confirmar prefijos exactos, query params, payloads de request y schemas de response** — eso lo da la captura mitm.
+
+## Lo que falta capturar para cerrar v1 del cliente
+
+1. **Headers obligatorios** que UTE exige (probable `X-Client-Type`, version, fingerprint del device).
+2. **Formato exacto** del response de `flags/SecurityChecksBypass` (bool plano, `{value:bool}`, etc.).
+3. **OAuth flow real**: `client_id`, `redirect_uri`, `scope` en `/authorize`; payload del POST a `/token`; forma de pasar el access_token a `/customersapp/...` (Bearer JWT directo, o intercambio por token UTE).
+4. **Códigos de respuesta** de `meters/readsync` (poll status) y de `energyclaims/*` (transiciones).
+5. **Schema de `customers/profile`** (campos disponibles para sensores HA).
 
 ## Sección histórica — upstream 2023 [OBSOLETO]
 

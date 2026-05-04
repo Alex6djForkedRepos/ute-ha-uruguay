@@ -25,6 +25,7 @@ exec uvx --from mitmproxy mitmdump \
   --set confdir="$PWD/mitm-ca" \
   --listen-host 0.0.0.0 \
   --listen-port 8080 \
+  -s "$PWD/security_bypass_addon.py" \
   -w "$OUT" \
   --set termlog_verbosity=info \
   --set console_eventlog_verbosity=info
