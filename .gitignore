@@ -1,0 +1,27 @@
+# captures con tokens / OTPs reales
+captures/flows/*.mitm
+captures/flows/*.har
+captures/flows/*.json
+!captures/flows/.gitkeep
+
+# APKs (legales pero pesados; los podemos versionar manual si hace falta)
+captures/apk/**/*.apk
+
+# tooling local
+tooling/mitm-ca/
+tooling/apk-patched/
+
+# python venvs
+client-py/.venv/
+ha-integration/.venv/
+
+# node
+client-ts/node_modules/
+client-ts/dist/
+
+# misc
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vscode/
