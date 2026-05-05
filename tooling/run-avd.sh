@@ -19,18 +19,26 @@ AVD_NAME="${AVD_NAME:-ute_capture}"
 
 echo ">> launching $AVD_NAME with HTTP proxy $PROXY_HOST:$PROXY_PORT"
 
-# -no-snapshot-load: arranque limpio cada vez (-no-snapshot guarda al apagar)
+# -no-snapshot-load: arranque limpio cada vez
+# -no-snapshot-save: no guardar state al cerrar (evita corrupción cross-run)
 # -writable-system: /system rw para sideloadear cert mitm
-# -http-proxy: el qemu enforces este proxy a TODO TCP (Flutter no puede esquivarlo)
-# -dns-server: evita DoH y otros bypass
-# -no-boot-anim: arranque más rápido
-# -no-audio: sin sonido
+# -http-proxy: qemu enforces el proxy a TODO TCP (Flutter no lo puede esquivar)
+# -no-boot-anim / -no-audio: arranque más rápido, sin ruido
+# -idle-grpc-timeout 0: CRITICAL — sin este flag, el watchdog interno mata
+#    qemu-system-x86_64 si no hay actividad gRPC en ~60s. La señal de muerte
+#    es "Netsim Wifi ipv6:[::1]:N is gone due to Socket closed" seguido de
+#    "bad_function_call was thrown in -fno-exceptions mode" y abort. Pasa
+#    durante captura cuando entre `adb shell input` consecutivos hay sleeps.
 exec emulator \
   -avd "$AVD_NAME" \
-  -no-snapshot-load \
+  -wipe-data \
+  -no-snapshot \
   -writable-system \
   -http-proxy "http://$PROXY_HOST:$PROXY_PORT" \
   -no-boot-anim \
   -no-audio \
   -gpu swiftshader_indirect \
-  -accel on
+  -accel on \
+  -idle-grpc-timeout 0 \
+  -no-window \
+  -network-user-mode-options "ipv6=off"

@@ -11,16 +11,13 @@ NAME="${1:-ute-$(date +%Y%m%d-%H%M%S)}"
 OUT="../captures/flows/${NAME}.mitm"
 mkdir -p "$(dirname "$OUT")"
 
-echo ">> mitmdump escuchando en 0.0.0.0:8080"
+echo ">> mitmdump escuchando en 0.0.0.0:8080 (IPv4 only)"
 echo ">> guardando flow en: $OUT"
-echo ">> filtrando dominio: rocme.ute.com.uy"
 echo ">> Ctrl-C para terminar"
 echo
 
-# --set confdir apunta al CA local
-# --listen-host 0.0.0.0 para que el OnePlus pueda alcanzarlo desde la LAN
-# -w guarda el flow file
-# --set termlog_verbosity=info para ver requests en la consola
+# IPv4-only: el AVD se configura con ipv6=off (ver run-avd.sh) para evitar
+# que netsimd genere conexiones IPv6 que crashean al recibir 502 del proxy.
 exec uvx --from mitmproxy mitmdump \
   --set confdir="$PWD/mitm-ca" \
   --listen-host 0.0.0.0 \
