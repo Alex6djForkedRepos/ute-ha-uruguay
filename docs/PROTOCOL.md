@@ -255,13 +255,125 @@ Esto evita Frida-gadget, objection-patchapk y reFlutter. La app patcheada por `a
 
 > ⚠️ Estos paths salen del Object Pool Dart. **Falta confirmar prefijos exactos, query params, payloads de request y schemas de response** — eso lo da la captura mitm.
 
-## Lo que falta capturar para cerrar v1 del cliente
+## Endpoints validados con captura real (cliente Py + TS funcionando)
 
-1. **Headers obligatorios** que UTE exige (probable `X-Client-Type`, version, fingerprint del device).
-2. **Formato exacto** del response de `flags/SecurityChecksBypass` (bool plano, `{value:bool}`, etc.).
-3. **OAuth flow real**: `client_id`, `redirect_uri`, `scope` en `/authorize`; payload del POST a `/token`; forma de pasar el access_token a `/customersapp/...` (Bearer JWT directo, o intercambio por token UTE).
-4. **Códigos de respuesta** de `meters/readsync` (poll status) y de `energyclaims/*` (transiciones).
-5. **Schema de `customers/profile`** (campos disponibles para sensores HA).
+### Flag de bypass
+
+`GET /customersapp/flags/SecurityChecksBypass`
+→ `{"active": false}` (default). El cliente NO usa este flag, sólo lo consume si replica el bootstrap. La app aborta cuando `active=false` *y* `is tampered=true` *y* la firma APK no matchea — irrelevante para nosotros (nunca emulamos firma).
+
+### Auth
+
+`POST https://identityserver.ute.com.uy/connect/token`
+- Header: `authorization: Basic b64(client:secret)` con valores de `oAuthConfiguration`.
+- Body: `grant_type=password&username=<doc>&password=<pwd>` (ROPC).
+- Refresh: `grant_type=refresh_token&refresh_token=<rt>`.
+- Errores: `400 {"error":"invalid_grant","error_description":"invalid_username_or_password"}`.
+
+### Listado de cuentas
+
+```
+GET /customersapp/accounts
+→ [{
+  "accountId": "0296730371",
+  "alias": "Configure el nombre",
+  "icon": "home",
+  "thirdParty": false,
+  "isAuthorized": true,
+  "address": "QUIJOTE CL 2411, 2411  , MONTEVIDEO, MONTEVIDEO",
+  "isTagged": false
+}]
+```
+
+### Suministros (servicePoints) bajo una cuenta
+
+```
+GET /customersapp/accounts/{accountId}/services
+→ [{
+  "serviceAgreementId": "0295414665",
+  "serviceAgreementType": "Eléctrico Particular",
+  "serviceAgreementStatus": 20,
+  "servicePointId": "5408200394",
+  "address": "QUIJOTE CL 2411",
+  "shortAddress": "CL QUIJOTE--MONTEVIDEO",
+  "city": "MONTEVIDEO",
+  "department": "MONTEVIDEO",
+  "zipCode": "11624-00029",
+  "premiseId": "5408200341",
+  "tariff": "TRD",
+  "tariffDescription": "Tarifa Residencial Doble Horario",
+  "zone": "ADT 1 - Urbana densidad alta",
+  "commercialOffice": "OFICINA COMERCIAL I UNIÓN",
+  "contractedPowerOnPeak": 3.7,
+  "contractedPowerOnValley": null,
+  "contractedPowerOnFlat": null,
+  "voltage": "BT 230 V",
+  "serviceType": "MONOFASICO",
+  "meterId": "5269623751",
+  "amiPresent": true,
+  "amiType": "KAIFA"
+}]
+```
+
+### Resumen del período de facturación corriente (estrella)
+
+```
+POST /customersapp/accounts/consumption/simulation
+{"accountId": "<id>"}
+→ {
+  "initialDate": "2026-04-16",
+  "finalDate":   "2026-05-05",
+  "currentSpending": 2622.05,         # UYU
+  "currentConsumption": 314.613,      # kWh
+  "errorMessage": null
+}
+```
+
+Es el endpoint que alimenta el header de la home de la app móvil ("315 kWh - $2.622 desde 16/04"). Útil como sensor primario de Home Assistant.
+
+### Consumo por horario (TOU)
+
+```
+GET /customersapp/accounts/{servicePointId}/calculateConsumptionForPlan/{plan}/{from}/{to}
+→ [
+  {"consumption": 1.0,  "errorCode": "1", "plan": "Omnicanal", "tou": "PUNTA", "uom": "kWh"},
+  {"consumption": 48.0, "errorCode": "1", "plan": "Omnicanal", "tou": "LLANO", "uom": "kWh"},
+  {"consumption": 13.0, "errorCode": "1", "plan": "Omnicanal", "tou": "VALLE", "uom": "kWh"}
+]
+```
+
+Plan code: `TRIPLERES17|18|19` para tarifa residencial triple horario; `from`/`to` en `YYYY-MM-DD`. La app prueba los 3 planes y se queda con el activo del cliente (señalizado por `errorCode != "1"`).
+
+### Status de suministro
+
+```
+GET /customersapp/accounts/{a}/services/{sa}/{sp}/status
+→ {"isInterrupted": false, "timestamp": "0001-01-01T00:00:00",
+   "supplyStatus": null, "supplyStatusMessages": []}
+```
+
+### Deuda total
+
+```
+GET /customersapp/invoices/totalDebt/{accountId}
+→ <número plano JSON, ej. 0 ó 1234.50>
+```
+
+### Otros endpoints capturados (TODO documentar bodies cuando se naveguen)
+
+- `GET /customersapp/messages/unread` → integer plano.
+- `POST /customersapp/customers/loggedin` `{"uniqueId":"<setup-id>"}` → `{"behaviours":[]}`.
+- `POST /customersapp/customers/event` `{uniqueId,eventName,eventData}` (telemetría).
+- `GET /customersapp/overview/{accountId}/version/{appVersionCode}` → metadata UI (widgets/shortcuts).
+- `POST /customersapp/integrity-check` `{"OS":0,"payload":"<SHA APK>"}` → server-side anti-tamper.
+
+### Pendiente con la app caída
+
+- `GET /customersapp/meters/readings` o equivalente — lectura instantánea V/A/W (medidor Kaifa AMI).
+- Detalle de facturas (`/customersapp/invoices/...`).
+- Smart Home / breakdown por uso.
+
+Esos endpoints aparecen al navegar pantallas específicas en la app; cuando los capturen se agregan al cliente con el patrón ya establecido.
 
 ## Sección histórica — upstream 2023 [OBSOLETO]
 

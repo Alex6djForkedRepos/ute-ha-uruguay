@@ -27,6 +27,11 @@ async def main() -> None:
             print(f"  Alias: {acc.alias!r}")
             print(f"  Mensajes sin leer: {await c.messages_unread()}")
             print(f"  Deuda total: ${await c.total_debt(acc.account_id):,.2f} UYU")
+            bp = await c.billing_period_summary(acc.account_id)
+            print(
+                f"  Período actual {bp.initial_date} → {bp.final_date}: "
+                f"{bp.current_consumption_kwh:.1f} kWh / ${bp.current_spending_uyu:,.2f} UYU"
+            )
 
             for svc in await c.services(acc.account_id):
                 print(

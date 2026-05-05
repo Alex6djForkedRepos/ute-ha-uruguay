@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from ute_client.models import Account, ConsumptionTOU, Service
+from ute_client.models import Account, BillingPeriodSummary, ConsumptionTOU, Service
 
 _LOG = logging.getLogger(__name__)
 
@@ -238,6 +238,18 @@ class UteClient:
         url = f"{API_BASE}/accounts/{service_point_id}/calculateConsumptionForPlan/{plan}/{date_from}/{date_to}"
         r = await self._get(url)
         return [ConsumptionTOU.from_json(x) for x in r.json()]
+
+    async def billing_period_summary(self, account_id: str) -> BillingPeriodSummary:
+        """Resumen del período de facturación corriente: kWh + UYU.
+
+        Es el endpoint que alimenta el header de la home de la app
+        ("315 kWh - $2.622 desde 16/04").
+        """
+        r = await self._post(
+            f"{API_BASE}/accounts/consumption/simulation",
+            json={"accountId": account_id},
+        )
+        return BillingPeriodSummary.from_json(r.json())
 
     async def total_debt(self, account_id: str) -> float:
         r = await self._get(f"{API_BASE}/invoices/totalDebt/{account_id}")

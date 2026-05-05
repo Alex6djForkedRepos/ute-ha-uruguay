@@ -20,8 +20,8 @@ El proyecto upstream [`gustavoqzdaa/ute_energy`](https://github.com/gustavoqzdaa
 | 4 | `tooling/` — mitmproxy CA + apk-mitm patched APK | ⏳ |
 | 5 | `captures/flows/` — capturas mitm de la app real | ⏳ |
 | 6 | `docs/PROTOCOL.md` v1 (validado con captura real) | ⏳ |
-| 7 | `ha-integration/` — custom component HACS | ⏳ |
-| 8 | `client-ts/` — cliente TS para volt.uy | ⏳ |
+| 7 | `ha-integration/` — custom component HACS | ✅ |
+| 8 | `client-ts/` — cliente TS para volt.uy | ✅ |
 
 ## Layout
 
@@ -42,6 +42,33 @@ HomeAssistant-UTE/
 └── tooling/                # apk-mitm output, certs locales
 ```
 
+## Cómo correr
+
+### Cliente Python
+
+```bash
+cd client-py
+uv venv && source .venv/bin/activate && uv pip install -e .
+python demo.py <documento> <password>
+```
+
+### Cliente TS (Node 20+)
+
+```bash
+cd client-ts
+npm install
+npx tsx demo.ts <documento> <password>
+```
+
+### Integración HA
+
+Copiar `ha-integration/custom_components/ute_energy/` a la carpeta `custom_components/` de tu Home Assistant. Reiniciar HA y agregar la integración "UTE Energy" desde Settings → Integrations. Te pide documento + contraseña. Crea sensores por suministro:
+
+- `sensor.consumo_punta_mes` / `consumo_llano_mes` / `consumo_valle_mes` / `consumo_total_mes` (kWh)
+- `sensor.consumo_del_periodo` (kWh) y `sensor.importe_estimado_del_periodo` (UYU) — período de facturación corriente
+- `sensor.deuda_total` (UYU)
+- `sensor.estado_del_suministro` (OK / INTERRUMPIDO)
+
 ## Disclaimer
 
-Esta integración no es oficial ni está afiliada con UTE. Usa una API privada de la app móvil; UTE puede cambiarla sin aviso y romper la integración.
+Esta integración no es oficial ni está afiliada con UTE. Usa una API privada de la app móvil; UTE puede cambiarla sin aviso y romper la integración. El cliente NO hardcodea credentials: las obtiene del propio backend de UTE en runtime via `POST /customersapp/customers/setup`.

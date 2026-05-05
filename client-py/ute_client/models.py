@@ -78,6 +78,28 @@ class Service:
 
 
 @dataclass
+class BillingPeriodSummary:
+    """Resumen de consumo + importe estimado del período de facturación corriente.
+    Lo expone /customersapp/accounts/consumption/simulation."""
+
+    initial_date: str  # YYYY-MM-DD
+    final_date: str  # YYYY-MM-DD
+    current_spending_uyu: float
+    current_consumption_kwh: float
+    error_message: str | None
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "BillingPeriodSummary":
+        return cls(
+            initial_date=data["initialDate"][:10],
+            final_date=data["finalDate"][:10],
+            current_spending_uyu=float(data.get("currentSpending") or 0),
+            current_consumption_kwh=float(data.get("currentConsumption") or 0),
+            error_message=data.get("errorMessage"),
+        )
+
+
+@dataclass
 class ConsumptionTOU:
     """Consumo agrupado por horario (Time-Of-Use): PUNTA / LLANO / VALLE."""
 

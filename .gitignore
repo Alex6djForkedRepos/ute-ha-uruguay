@@ -51,3 +51,8 @@ captures/apk/*/*.idsig
 # Python venv del cliente
 client-py/.venv/
 client-py/*.egg-info/
+
+# Node
+client-ts/node_modules/
+client-ts/dist/
+client-ts/package-lock.json

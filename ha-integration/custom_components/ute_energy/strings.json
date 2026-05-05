@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UTE Energy",
+        "description": "Ingresá tu documento (CI, RUT, BPS) y la contraseña de la app UTE.",
+        "data": {
+          "document": "Documento (CI / RUT / BPS)",
+          "password": "Contraseña"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Documento o contraseña incorrectos.",
+      "cannot_connect": "No se pudo conectar con UTE."
+    },
+    "abort": {
+      "already_configured": "Esta cuenta ya está configurada."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "consumption_punta": { "name": "Consumo punta (mes)" },
+      "consumption_llano": { "name": "Consumo llano (mes)" },
+      "consumption_valle": { "name": "Consumo valle (mes)" },
+      "consumption_total": { "name": "Consumo total (mes)" },
+      "total_debt": { "name": "Deuda total" },
+      "supply_status": { "name": "Estado del suministro" },
+      "billing_spending": { "name": "Importe estimado del período" },
+      "billing_consumption": { "name": "Consumo del período" }
+    }
+  }
+}

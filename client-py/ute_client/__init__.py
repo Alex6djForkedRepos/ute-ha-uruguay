@@ -9,13 +9,14 @@ Ver `docs/PROTOCOL.md` para la spec completa.
 """
 
 from ute_client.client import UteClient, UteAuthError, UteApiError
-from ute_client.models import Account, Service, ConsumptionTOU
+from ute_client.models import Account, BillingPeriodSummary, ConsumptionTOU, Service
 
 __all__ = [
     "UteClient",
     "UteAuthError",
     "UteApiError",
     "Account",
-    "Service",
+    "BillingPeriodSummary",
     "ConsumptionTOU",
+    "Service",
 ]
