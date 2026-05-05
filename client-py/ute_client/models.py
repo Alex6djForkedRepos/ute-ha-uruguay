@@ -100,6 +100,58 @@ class BillingPeriodSummary:
 
 
 @dataclass
+class Device:
+    """Dispositivo smart vinculado al servicePoint (típicamente Shelly UTE)."""
+
+    device_id: int
+    name: str
+    provider: str  # "SHELLY"
+    status: str  # "online" | "offline"
+    category_id: str
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "Device":
+        return cls(
+            device_id=int(data["deviceId"]),
+            name=data.get("name") or "",
+            provider=data.get("provider") or "",
+            status=data.get("status") or "",
+            category_id=data.get("categoryId") or "",
+        )
+
+
+@dataclass
+class DeviceStatus:
+    """Lectura instantánea del device (Shelly UTE) — V, W, RSSI, on/off."""
+
+    device_id: int
+    instant_consumption_w: float  # potencia instantánea (W)
+    voltage_v: float
+    rssi_dbm: int
+    is_device_on: bool
+    is_in_bypass: bool
+    is_schedule_on: bool
+    is_schedule_active: bool
+    percentage_of_total_consumption: str  # ej "22%"
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "DeviceStatus":
+        return cls(
+            device_id=int(data["deviceId"]),
+            instant_consumption_w=float(data.get("instantConsumption") or 0),
+            voltage_v=float(data.get("voltage") or 0),
+            rssi_dbm=int(data.get("rssi") or 0),
+            is_device_on=bool(data.get("isDeviceOn")),
+            is_in_bypass=bool(data.get("isInBypass")),
+            is_schedule_on=bool(data.get("isScheduleOn")),
+            is_schedule_active=bool(data.get("isScheduleActive")),
+            percentage_of_total_consumption=str(
+                data.get("percentageOfTotalConsumption") or ""
+            ),
+        )
+
+
+@dataclass
 class ConsumptionTOU:
     """Consumo agrupado por horario (Time-Of-Use): PUNTA / LLANO / VALLE."""
 

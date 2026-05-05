@@ -19,7 +19,14 @@ from typing import Any
 
 import httpx
 
-from ute_client.models import Account, BillingPeriodSummary, ConsumptionTOU, Service
+from ute_client.models import (
+    Account,
+    BillingPeriodSummary,
+    ConsumptionTOU,
+    Device,
+    DeviceStatus,
+    Service,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -261,6 +268,36 @@ class UteClient:
     ) -> dict[str, Any]:
         r = await self._get(
             f"{API_BASE}/accounts/{account_id}/services/{service_agreement_id}/{service_point_id}/status"
+        )
+        return r.json()
+
+    async def devices(self, service_point_id: str) -> dict[str, Any]:
+        """Lista de devices smart (Shelly UTE) vinculados al servicePoint.
+
+        → {"allowEnrollNewDevice": bool,
+           "devices": [Device, ...],
+           "plans": [{applicationId, status, name, maxDevices, allowEnroll}, ...]}
+        """
+        r = await self._get(f"{API_BASE}/device/{service_point_id}")
+        body = r.json()
+        body["devices"] = [Device.from_json(d) for d in body.get("devices") or []]
+        return body
+
+    async def device_status(self, device_id: int) -> DeviceStatus:
+        """Lectura instantánea del Shelly UTE: V, W, RSSI, on/off, schedule."""
+        r = await self._get(f"{API_BASE}/device/{device_id}/status")
+        return DeviceStatus.from_json(r.json())
+
+    async def consumption_breakdown(
+        self, service_point_id: str, device_id: int, date: str
+    ) -> dict[str, Any]:
+        """Desglose de consumo por categoría (refrigerador, A/C, calefón, otros).
+
+        `date` en formato YYYY-MM-DD (la API la usa para escoger período).
+        """
+        # API espera el date como query param (?date=YYYY-MM-DD); probar.
+        r = await self._get(
+            f"{API_BASE}/device/consumptionBreakdown/{service_point_id}/{device_id}?date={date}"
         )
         return r.json()
 

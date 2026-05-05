@@ -12,14 +12,19 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfElectricPotential,
+    UnitOfEnergy,
+    UnitOfPower,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
-from .coordinator import UteCoordinator, _ServiceData
+from .coordinator import UteCoordinator, _DeviceData, _ServiceData
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -83,7 +88,114 @@ async def async_setup_entry(
         entities.append(_BillingSpendingSensor(coordinator, account_id))
         entities.append(_BillingConsumptionSensor(coordinator, account_id))
         entities.append(_UnpaidCountSensor(coordinator, account_id))
+        # Shelly UTE devices: un sensor por device por métrica
+        for sd in services:
+            for dev in sd.devices:
+                for desc in _DEVICE_SENSORS:
+                    entities.append(
+                        _DeviceSensor(coordinator, account_id, sd, dev, desc)
+                    )
     async_add_entities(entities)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DeviceSensorDesc(SensorEntityDescription):
+    value_fn: Callable[[_DeviceData], Any] = lambda d: None
+
+
+_DEVICE_SENSORS: tuple[_DeviceSensorDesc, ...] = (
+    _DeviceSensorDesc(
+        key="device_power",
+        translation_key="device_power",
+        name="Potencia instantánea",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        value_fn=lambda d: d.instant_consumption_w,
+    ),
+    _DeviceSensorDesc(
+        key="device_voltage",
+        translation_key="device_voltage",
+        name="Voltaje",
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        value_fn=lambda d: d.voltage_v,
+    ),
+    _DeviceSensorDesc(
+        key="device_rssi",
+        translation_key="device_rssi",
+        name="RSSI",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        value_fn=lambda d: d.rssi_dbm,
+        entity_registry_enabled_default=False,
+    ),
+    _DeviceSensorDesc(
+        key="device_state",
+        translation_key="device_state",
+        name="Estado",
+        value_fn=lambda d: "encendido" if d.is_device_on else "apagado",
+    ),
+    _DeviceSensorDesc(
+        key="device_consumption_share",
+        translation_key="device_consumption_share",
+        name="Porcentaje del consumo total",
+        icon="mdi:chart-pie",
+        value_fn=lambda d: d.percentage_of_total_consumption.rstrip("%") or None,
+        native_unit_of_measurement="%",
+    ),
+)
+
+
+class _DeviceSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Sensor para un Shelly UTE individual (Calefón, A/C, etc)."""
+
+    _attr_has_entity_name = True
+    entity_description: _DeviceSensorDesc
+
+    def __init__(
+        self,
+        coordinator: UteCoordinator,
+        account_id: str,
+        sd: _ServiceData,
+        dev: _DeviceData,
+        desc: _DeviceSensorDesc,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = desc
+        self._account_id = account_id
+        self._service_point_id = sd.service.service_point_id
+        self._device_id = dev.device_id
+        self._attr_unique_id = f"{account_id}_{dev.device_id}_{desc.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"shelly:{dev.device_id}")},
+            name=dev.name,
+            manufacturer="Shelly (vía UTE)",
+            model=f"Categoría {dev.category_id}",
+            via_device=(DOMAIN, f"{account_id}:{sd.service.service_point_id}"),
+            configuration_url="https://rocme.ute.com.uy/customersapp",
+        )
+
+    def _current_dev(self) -> _DeviceData | None:
+        for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
+            if sd.service.service_point_id != self._service_point_id:
+                continue
+            for d in sd.devices:
+                if d.device_id == self._device_id:
+                    return d
+        return None
+
+    @property
+    def available(self) -> bool:
+        d = self._current_dev()
+        return super().available and d is not None and d.online
+
+    @property
+    def native_value(self) -> Any:
+        d = self._current_dev()
+        return self.entity_description.value_fn(d) if d else None
 
 
 class _UteSensor(CoordinatorEntity[UteCoordinator], SensorEntity):

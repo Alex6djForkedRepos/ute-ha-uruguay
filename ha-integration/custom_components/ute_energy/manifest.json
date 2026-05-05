@@ -1,6 +1,6 @@
 {
   "domain": "ute_energy",
-  "name": "UTE Energy",
+  "name": "UTE Uruguay",
   "codeowners": ["@juanmreyesa"],
   "config_flow": true,
   "dependencies": [],

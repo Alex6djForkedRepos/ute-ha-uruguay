@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "UTE Energy",
-        "description": "Ingresá tu documento (CI, RUT, BPS) y la contraseña de la app UTE.",
+        "title": "UTE Uruguay",
+        "description": "Ingresá tu documento (CI, RUT, BPS) y la contraseña que usás en la app móvil de UTE.",
         "data": {
           "document": "Documento (CI / RUT / BPS)",
           "password": "Contraseña"
@@ -28,7 +28,12 @@
       "supply_status": { "name": "Estado del suministro" },
       "billing_spending": { "name": "Importe estimado del período" },
       "billing_consumption": { "name": "Consumo del período" },
-      "unpaid_invoices": { "name": "Facturas impagas" }
+      "unpaid_invoices": { "name": "Facturas impagas" },
+      "device_power": { "name": "Potencia instantánea" },
+      "device_voltage": { "name": "Voltaje" },
+      "device_rssi": { "name": "RSSI" },
+      "device_state": { "name": "Estado" },
+      "device_consumption_share": { "name": "Porcentaje del consumo total" }
     }
   }
 }
