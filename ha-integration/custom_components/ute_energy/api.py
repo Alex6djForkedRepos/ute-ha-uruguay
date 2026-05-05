@@ -3,14 +3,16 @@
 Implementa el flujo completo capturado de la app v1.0.40:
 1. Bootstrap zero-secret via /customersapp/customers/setup.
 2. Login ROPC (resource owner password) contra identityserver.ute.com.uy.
-3. Refresh token automático.
-4. Endpoints: accounts, services, consumption-by-TOU, status, deuda.
+3. Refresh token automático con lock para evitar carrera.
+4. Endpoints: accounts, services, consumption-by-TOU, status, deuda,
+   facturas impagas, devices Shelly UTE + status en vivo.
 
 Este cliente NO inyecta secrets ni telemetría falsa; usa exactamente lo que
 la app móvil hace.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import time
@@ -61,9 +63,9 @@ class _OAuthConfig:
     client: str  # customers_mobile_app
     secret: str  # rotado por server
     scope: str  # customers.accounts
-    # los campos gubUy* solo se usan si el usuario eligiera login federado;
-    # ROPC directo no los necesita.
-    raw: dict[str, Any] = field(default_factory=dict)
+    # los campos gubUy* solo se usan si el usuario eligiera login federado
+    # contra id.gub.uy; ROPC directo no los necesita y no los guardamos para
+    # no mantener un secret extra en memoria.
 
 
 class UteClient:
@@ -87,11 +89,16 @@ class UteClient:
         self._oauth: _OAuthConfig | None = None
         self._unique_id: str | None = None
         self._token: _Token | None = None
+        self._refresh_lock = asyncio.Lock()
 
     async def __aenter__(self) -> "UteClient":
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Cerrar el HTTP client subyacente. Idempotente."""
         await self._http.aclose()
 
     # ------------------------------------------------------------------
@@ -100,7 +107,8 @@ class UteClient:
     async def bootstrap(self, registration_id: str = "", device_info: list | None = None) -> None:
         """Llamar UNA VEZ antes de login. Obtiene client_id/secret y unique_id."""
         # GET flag de bypass — si está activo, la app salta integrity check.
-        # No es estrictamente necesario para nosotros, pero seguimos el patrón.
+        # No es estrictamente necesario para nosotros, pero seguimos el patrón
+        # de la app y un fallo acá es informativo, no bloquea login.
         try:
             await self._http.get(f"{API_BASE}/flags/SecurityChecksBypass")
         except httpx.HTTPError as e:
@@ -111,17 +119,22 @@ class UteClient:
             json={"registrationId": registration_id, "deviceInfo": device_info or []},
             headers={"content-type": "application/json; charset=utf-8"},
         )
-        r.raise_for_status()
-        body = r.json()
-        cfg = body["oAuthConfiguration"]
-        self._oauth = _OAuthConfig(
-            authority=cfg["authority"],
-            client=cfg["client"],
-            secret=cfg["secret"],
-            scope=cfg["scope"],
-            raw=cfg,
-        )
-        self._unique_id = body["uniqueId"]
+        if r.status_code >= 400:
+            raise UteApiError(f"setup → {r.status_code}: {r.text[:200]}")
+        try:
+            body = r.json()
+            cfg = body["oAuthConfiguration"]
+            self._oauth = _OAuthConfig(
+                authority=cfg["authority"],
+                client=cfg["client"],
+                secret=cfg["secret"],
+                scope=cfg["scope"],
+            )
+            self._unique_id = body["uniqueId"]
+        except (KeyError, TypeError, ValueError) as e:
+            raise UteApiError(
+                f"unexpected /customers/setup shape: {r.text[:200]}"
+            ) from e
         _LOG.info("bootstrap OK, client=%s scope=%s", cfg["client"], cfg["scope"])
 
     # ------------------------------------------------------------------
@@ -142,7 +155,8 @@ class UteClient:
         )
 
     async def _oauth_token(self, *, grant_type: str, extra: dict[str, str]) -> None:
-        assert self._oauth
+        if self._oauth is None:
+            raise RuntimeError("Llamar bootstrap() antes de pedir token")
         basic = base64.b64encode(
             f"{self._oauth.client}:{self._oauth.secret}".encode()
         ).decode()
@@ -155,66 +169,87 @@ class UteClient:
                 "content-type": "application/x-www-form-urlencoded; charset=utf-8",
             },
         )
-        if r.status_code == 400:
-            err = r.json()
+        if r.status_code in (400, 401):
+            try:
+                err = r.json()
+            except Exception:
+                err = {"error_description": r.text[:200]}
             raise UteAuthError(
-                f"{err.get('error')}: {err.get('error_description')}"
+                f"{err.get('error') or r.status_code}: {err.get('error_description') or ''}"
             )
-        r.raise_for_status()
-        tok = r.json()
-        self._token = _Token(
-            access_token=tok["access_token"],
-            refresh_token=tok.get("refresh_token", ""),
-            expires_at=time.time() + int(tok["expires_in"]),
-            scope=tok.get("scope", ""),
-        )
+        if r.status_code >= 400:
+            # No incluyo body acá porque el cuerpo de error puede contener
+            # tokens parcialmente formados o headers reflejados.
+            raise UteApiError(f"/connect/token → {r.status_code}")
+        try:
+            tok = r.json()
+            self._token = _Token(
+                access_token=tok["access_token"],
+                refresh_token=tok.get("refresh_token", ""),
+                expires_at=time.time() + int(tok["expires_in"]),
+                scope=tok.get("scope", ""),
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            raise UteApiError("unexpected /connect/token response shape") from e
 
     async def _refresh_if_needed(self) -> None:
-        if self._token and self._token.is_valid:
-            return
-        if self._token and self._token.refresh_token:
-            try:
-                await self._oauth_token(
-                    grant_type="refresh_token",
-                    extra={"refresh_token": self._token.refresh_token},
-                )
+        # Lock para evitar que múltiples requests concurrentes hagan token refresh
+        # en paralelo (algunos IdP rotan refresh_token y solo el primero queda válido).
+        async with self._refresh_lock:
+            if self._token and self._token.is_valid:
                 return
-            except UteAuthError:
-                pass
-        raise UteAuthError("Token expirado y refresh inválido — re-login")
+            if self._token and self._token.refresh_token:
+                try:
+                    await self._oauth_token(
+                        grant_type="refresh_token",
+                        extra={"refresh_token": self._token.refresh_token},
+                    )
+                    return
+                except UteAuthError:
+                    self._token = None  # refresh definitivamente inválido
+            raise UteAuthError("Token expirado y refresh inválido — re-login")
 
     # ------------------------------------------------------------------
     # 3. HTTP helper authenticated.
     # ------------------------------------------------------------------
+    def _bearer(self) -> dict[str, str]:
+        if self._token is None:
+            raise RuntimeError("Llamar login() antes de hacer requests autenticados")
+        return {"authorization": f"Bearer {self._token.access_token}"}
+
     async def _get(self, url: str) -> httpx.Response:
         await self._refresh_if_needed()
-        assert self._token
-        r = await self._http.get(
-            url,
-            headers={"authorization": f"Bearer {self._token.access_token}"},
-        )
-        if r.status_code == 401:
-            self._token = None
+        r = await self._http.get(url, headers=self._bearer())
+        if r.status_code == 401 and self._token is not None:
+            # Token rechazado; forzar refresh sin descartar el refresh_token.
+            self._token.expires_at = 0
             await self._refresh_if_needed()
-            r = await self._http.get(
-                url,
-                headers={"authorization": f"Bearer {self._token.access_token}"},
-            )
+            r = await self._http.get(url, headers=self._bearer())
         if r.status_code >= 400:
             raise UteApiError(f"GET {url} → {r.status_code}: {r.text[:200]}")
         return r
 
     async def _post(self, url: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
         await self._refresh_if_needed()
-        assert self._token
         r = await self._http.post(
             url,
             json=json,
             headers={
-                "authorization": f"Bearer {self._token.access_token}",
+                **self._bearer(),
                 "content-type": "application/json; charset=utf-8",
             },
         )
+        if r.status_code == 401 and self._token is not None:
+            self._token.expires_at = 0
+            await self._refresh_if_needed()
+            r = await self._http.post(
+                url,
+                json=json,
+                headers={
+                    **self._bearer(),
+                    "content-type": "application/json; charset=utf-8",
+                },
+            )
         if r.status_code >= 400:
             raise UteApiError(f"POST {url} → {r.status_code}: {r.text[:200]}")
         return r
@@ -260,8 +295,7 @@ class UteClient:
 
     async def total_debt(self, account_id: str) -> float:
         r = await self._get(f"{API_BASE}/invoices/totalDebt/{account_id}")
-        # response es número plano JSON: 0 / 1234.50
-        return float(r.text.strip() or 0)
+        return _parse_number(r.text)
 
     async def supply_status(
         self, account_id: str, service_agreement_id: str, service_point_id: str
@@ -303,4 +337,15 @@ class UteClient:
 
     async def messages_unread(self) -> int:
         r = await self._get(f"{API_BASE}/messages/unread")
-        return int(r.text.strip() or 0)
+        return int(_parse_number(r.text))
+
+
+def _parse_number(text: str) -> float:
+    """Body plano `0` / `1234.50` o vacío. Cualquier otra cosa = error de API."""
+    s = (text or "").strip()
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError as e:
+        raise UteApiError(f"esperaba número plano, recibí: {s[:80]!r}") from e

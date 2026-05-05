@@ -1,27 +1,18 @@
-# UTE Energy
+# UTE Uruguay
 
-Integración Home Assistant para [UTE](https://www.ute.com.uy/) (Administración Nacional de Usinas y Trasmisiones Eléctricas, Uruguay).
+Lee tu consumo, importe del período, deuda y estado del suministro **directo de la API de la app móvil oficial de UTE**.
 
-Lee tu consumo eléctrico, importe del período, deuda y estado del suministro directamente del backend de la app móvil oficial — sin scrapear la web.
+Soporta tarifas Simple, Doble Horario y Triple Horario — los buckets se autodetectan según tu plan tarifario.
 
-**Sensores creados por suministro:**
+Si tenés un **Shelly UTE** (Calefón, A/C, plan "Descubre tu consumo"), aparece como dispositivo separado con sensores de potencia, voltaje, estado del relé y porcentaje del consumo total.
 
-- Consumo punta / llano / valle / total del mes (kWh)
-- Consumo del período de facturación corriente (kWh)
-- Importe estimado del período (UYU)
-- Deuda total (UYU)
-- Cantidad de facturas impagas
-- Estado del suministro (OK / INTERRUMPIDO)
+## Configuración
 
-Compatible con el [Energy Dashboard](https://www.home-assistant.io/docs/energy/) de Home Assistant.
+Settings → Devices & Services → Add Integration → "UTE Uruguay" → documento (CI/RUT/BPS) + contraseña de la app móvil.
 
-## Cómo se usa
+## Notas
 
-Después de instalar:
-1. Settings → Devices & Services → Add Integration → "UTE Energy".
-2. Ingresá tu documento (CI / RUT / BPS) y la contraseña que usás en la app móvil de UTE.
-3. Listo. Los sensores aparecen al toque.
-
-## Disclaimer
-
-No es oficial ni está afiliado con UTE. Usa la API privada de su app móvil; UTE puede cambiarla y romper la integración.
+- **Cero secrets hardcodeados**: el `client_id`/`client_secret` se obtienen en runtime del propio backend de UTE, igual que la app.
+- La contraseña queda guardada en `.storage/core.config_entries` de Home Assistant en texto plano (estándar para integraciones cloud).
+- Update interval: 30 minutos. Suficiente para consumo (datos del medidor llegan al backend con latencia de ~horas) y respeta el rate limiting de UTE.
+- No oficial, no afiliado. UTE puede cambiar la API y romper la integración.

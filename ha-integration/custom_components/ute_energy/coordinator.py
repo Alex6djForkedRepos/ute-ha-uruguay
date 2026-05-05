@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_PLAN, DEFAULT_SCAN_INTERVAL_MIN, DOMAIN, PLAN_BY_TARIFF
@@ -63,6 +64,7 @@ class UteData:
     accounts: dict[str, dict[str, Any]] = field(default_factory=dict)
     services_by_account: dict[str, list[_ServiceData]] = field(default_factory=dict)
     total_debt_by_account: dict[str, float] = field(default_factory=dict)
+    unpaid_count_by_account: dict[str, int] = field(default_factory=dict)
     billing_period_by_account: dict[str, _BillingPeriod] = field(default_factory=dict)
 
 
@@ -90,7 +92,7 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
 
     async def async_close(self) -> None:
         if self._client:
-            await self._client._http.aclose()
+            await self._client.aclose()
             self._client = None
 
     async def _async_update_data(self) -> UteData:
@@ -110,8 +112,18 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                     "alias": acc.alias,
                     "address": acc.address,
                 }
-                data.total_debt_by_account[acc.account_id] = (
-                    await self._client.total_debt(acc.account_id)
+                # /invoices/unpaids es el endpoint canónico — devuelve totalDebt
+                # y la lista de facturas. Reemplaza el legacy /invoices/totalDebt.
+                try:
+                    unpaid = await self._client.unpaid_invoices(acc.account_id)
+                except Exception as e:  # noqa: BLE001 — log y fallback
+                    _LOGGER.debug("unpaid_invoices failed: %s", e)
+                    unpaid = {"totalDebt": 0, "billsUnpaid": []}
+                data.total_debt_by_account[acc.account_id] = float(
+                    unpaid.get("totalDebt") or 0
+                )
+                data.unpaid_count_by_account[acc.account_id] = len(
+                    unpaid.get("billsUnpaid") or []
                 )
                 summary = await self._client.billing_period_summary(acc.account_id)
                 data.billing_period_by_account[acc.account_id] = _BillingPeriod(
@@ -166,7 +178,9 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                     services.append(sd)
                 data.services_by_account[acc.account_id] = services
         except UteAuthError as e:
-            raise UpdateFailed(f"auth: {e}") from e
-        except Exception as e:  # pragma: no cover
+            # Refresh token muerto: forzar reauth ConfigFlow.
+            await self.async_close()
+            raise ConfigEntryAuthFailed(str(e)) from e
+        except Exception as e:  # noqa: BLE001 — HA pide UpdateFailed para errores transitorios
             raise UpdateFailed(str(e)) from e
         return data

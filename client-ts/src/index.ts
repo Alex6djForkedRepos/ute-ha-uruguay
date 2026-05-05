@@ -96,8 +96,16 @@ export class UteClient {
   private oauth: OAuthConfig | null = null;
   private uniqueId: string | null = null;
   private token: TokenInternal | null = null;
+  private refreshing: Promise<void> | null = null;
 
   constructor(private baseUrl: string = API_BASE) {}
+
+  private requireToken(): TokenInternal {
+    if (!this.token) {
+      throw new UteAuthError("not authenticated; call bootstrap() and login() first");
+    }
+    return this.token;
+  }
 
   // ---------------------------------------------------------------
   // Bootstrap zero-secret.
@@ -121,12 +129,17 @@ export class UteClient {
       body: JSON.stringify({ registrationId: "", deviceInfo: [] }),
     });
     if (!r.ok) {
-      throw new UteApiError(`bootstrap failed: ${r.status}`);
+      throw new UteApiError(`/customers/setup → ${r.status}: ${await r.text().catch(() => "")}`);
     }
-    const body = (await r.json()) as {
-      uniqueId: string;
-      oAuthConfiguration: OAuthConfig;
-    };
+    let body: { uniqueId?: string; oAuthConfiguration?: OAuthConfig };
+    try {
+      body = (await r.json()) as typeof body;
+    } catch (e) {
+      throw new UteApiError("invalid JSON in /customers/setup response");
+    }
+    if (!body.oAuthConfiguration || !body.uniqueId) {
+      throw new UteApiError(`unexpected /customers/setup shape: ${JSON.stringify(body).slice(0, 200)}`);
+    }
     this.oauth = body.oAuthConfiguration;
     this.uniqueId = body.uniqueId;
     return this.oauth;
@@ -150,7 +163,9 @@ export class UteClient {
   }
 
   private async oauthToken(extra: Record<string, string>): Promise<void> {
-    if (!this.oauth) throw new Error("oauth config missing");
+    if (!this.oauth) {
+      throw new UteAuthError("call bootstrap() before requesting a token");
+    }
     const basic = btoa(`${this.oauth.client}:${this.oauth.secret}`);
     const params = new URLSearchParams(extra);
     const r = await fetch(`${this.oauth.authority}/connect/token`, {
@@ -162,41 +177,68 @@ export class UteClient {
       },
       body: params.toString(),
     });
-    if (r.status === 400) {
-      const err = (await r.json()) as { error?: string; error_description?: string };
-      throw new UteAuthError(`${err.error}: ${err.error_description}`);
+    if (r.status === 400 || r.status === 401) {
+      let err: { error?: string; error_description?: string } = {};
+      try {
+        err = (await r.json()) as typeof err;
+      } catch {
+        err = { error_description: (await r.text()).slice(0, 200) };
+      }
+      throw new UteAuthError(`${err.error || r.status}: ${err.error_description || ""}`);
     }
     if (!r.ok) {
-      throw new UteApiError(`token request failed: ${r.status}`);
+      throw new UteApiError(`/connect/token → ${r.status}`);
     }
-    const tok = (await r.json()) as {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-      scope: string;
+    let tok: {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      scope?: string;
     };
+    try {
+      tok = (await r.json()) as typeof tok;
+    } catch {
+      throw new UteApiError("invalid JSON in /connect/token");
+    }
+    if (!tok.access_token || typeof tok.expires_in !== "number") {
+      throw new UteApiError("unexpected /connect/token response shape");
+    }
     this.token = {
       accessToken: tok.access_token,
-      refreshToken: tok.refresh_token,
+      refreshToken: tok.refresh_token || "",
       expiresAt: Date.now() + tok.expires_in * 1000,
-      scope: tok.scope,
+      scope: tok.scope || "",
     };
   }
 
   private async refreshIfNeeded(): Promise<void> {
     if (this.token && this.token.expiresAt > Date.now() + 30_000) return;
-    if (this.token?.refreshToken) {
-      try {
-        await this.oauthToken({
-          grant_type: "refresh_token",
-          refresh_token: this.token.refreshToken,
-        });
-        return;
-      } catch (e) {
-        if (!(e instanceof UteAuthError)) throw e;
-      }
+    // Coalesce refresh requests concurrentes; el primero rota el refresh_token
+    // y los demás esperan al mismo `Promise<void>`.
+    if (this.refreshing) {
+      await this.refreshing;
+      return;
     }
-    throw new UteAuthError("token expired and refresh invalid — re-login");
+    this.refreshing = (async () => {
+      try {
+        if (this.token?.refreshToken) {
+          try {
+            await this.oauthToken({
+              grant_type: "refresh_token",
+              refresh_token: this.token.refreshToken,
+            });
+            return;
+          } catch (e) {
+            if (!(e instanceof UteAuthError)) throw e;
+            this.token = null;
+          }
+        }
+        throw new UteAuthError("token expired and refresh invalid — re-login");
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    await this.refreshing;
   }
 
   // ---------------------------------------------------------------
@@ -216,18 +258,19 @@ export class UteClient {
       headers: {
         ...this.commonHeaders(),
         ...(init?.headers ?? {}),
-        authorization: `Bearer ${this.token!.accessToken}`,
+        authorization: `Bearer ${this.requireToken().accessToken}`,
       },
     });
-    if (r.status === 401) {
-      this.token = null;
+    if (r.status === 401 && this.token) {
+      // Forzar refresh sin descartar el refresh_token.
+      this.token.expiresAt = 0;
       await this.refreshIfNeeded();
       return fetch(url, {
         ...init,
         headers: {
           ...this.commonHeaders(),
           ...(init?.headers ?? {}),
-          authorization: `Bearer ${this.token!.accessToken}`,
+          authorization: `Bearer ${this.requireToken().accessToken}`,
         },
       });
     }

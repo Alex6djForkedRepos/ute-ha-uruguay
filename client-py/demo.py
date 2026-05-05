@@ -1,21 +1,25 @@
 """Demo CLI del cliente UTE.
 
 Uso:
-    python demo.py <documento> <password>
+    python demo.py [documento]
+    # password: env UTE_PASSWORD o se pide por stdin (oculto)
 """
 import asyncio
 import logging
+import os
 import sys
+from getpass import getpass
 
 from ute_client import UteClient
 
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    if len(sys.argv) != 3:
+    if len(sys.argv) > 2:
         print(__doc__)
         sys.exit(1)
-    doc, pwd = sys.argv[1], sys.argv[2]
+    doc = sys.argv[1] if len(sys.argv) == 2 else input("Documento (CI/RUT/BPS): ").strip()
+    pwd = os.environ.get("UTE_PASSWORD") or getpass("Contraseña: ")
 
     async with UteClient() as c:
         await c.bootstrap()
@@ -60,8 +64,9 @@ async def main() -> None:
                 today = date.today()
                 start = today.replace(day=1).isoformat()
                 end = today.isoformat()
+                # Plan code = código del tariff del cliente (TRD/TRT/TRS).
                 tous = await c.consumption_by_tou(
-                    svc.service_point_id, plan="TRIPLERES17", date_from=start, date_to=end
+                    svc.service_point_id, plan=svc.tariff or "TRD", date_from=start, date_to=end
                 )
                 total = sum(t.consumption for t in tous)
                 print(f"    Consumo {start}–{end}: {total:.1f} kWh")

@@ -59,3 +59,8 @@ client-ts/package-lock.json
 *.png
 client-py/probe*.py
 captures/apk/*/splits/
+
+# Apktool logs y zips temporales
+captures/apk/*/logs/
+captures/apk/*/*.apks
+captures/apk/*/*.apk

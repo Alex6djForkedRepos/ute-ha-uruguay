@@ -24,9 +24,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     try:
         await coordinator.async_login()
-    except Exception as e:  # pragma: no cover
-        msg = str(e).lower()
-        if "invalid_username_or_password" in msg or "invalid_grant" in msg:
+    except Exception as e:
+        from .api import UteAuthError
+
+        if isinstance(e, UteAuthError):
             raise ConfigEntryAuthFailed(str(e)) from e
         raise ConfigEntryNotReady(str(e)) from e
 

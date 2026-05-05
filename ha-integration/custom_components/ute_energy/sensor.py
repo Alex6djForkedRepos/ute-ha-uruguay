@@ -374,7 +374,9 @@ def _shelly_device_info(
     account_id: str, sd: _ServiceData, dev: _DeviceData
 ) -> DeviceInfo:
     return DeviceInfo(
-        identifiers={(DOMAIN, f"shelly:{dev.device_id}")},
+        # account_id en el identifier evita colisión cross-account dentro de
+        # un mismo HA con dos suministros UTE distintos.
+        identifiers={(DOMAIN, f"shelly:{account_id}:{dev.device_id}")},
         name=dev.name,
         manufacturer="Shelly (vía UTE)",
         model=f"Categoría {dev.category_id}",
