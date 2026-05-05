@@ -21,8 +21,10 @@
   "entity": {
     "sensor": {
       "consumption_punta": { "name": "Consumo punta (mes)" },
+      "consumption_f_punta": { "name": "Consumo fuera de punta (mes)" },
       "consumption_llano": { "name": "Consumo llano (mes)" },
       "consumption_valle": { "name": "Consumo valle (mes)" },
+      "consumption_trs": { "name": "Consumo (mes)" },
       "consumption_total": { "name": "Consumo total (mes)" },
       "total_debt": { "name": "Deuda total" },
       "supply_status": { "name": "Estado del suministro" },
@@ -32,8 +34,12 @@
       "device_power": { "name": "Potencia instantánea" },
       "device_voltage": { "name": "Voltaje" },
       "device_rssi": { "name": "RSSI" },
-      "device_state": { "name": "Estado" },
       "device_consumption_share": { "name": "Porcentaje del consumo total" }
+    },
+    "binary_sensor": {
+      "device_on": { "name": "Encendido" },
+      "device_bypass": { "name": "Bypass" },
+      "device_schedule_active": { "name": "Programación activa" }
     }
   }
 }

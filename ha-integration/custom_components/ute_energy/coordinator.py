@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL_MIN, DOMAIN, PLAN_DEFAULT
+from .const import DEFAULT_PLAN, DEFAULT_SCAN_INTERVAL_MIN, DOMAIN, PLAN_BY_TARIFF
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,11 +35,19 @@ class _DeviceData:
 @dataclass
 class _ServiceData:
     service: Any  # ute_client.Service
-    consumption_punta_kwh: float = 0.0
-    consumption_llano_kwh: float = 0.0
-    consumption_valle_kwh: float = 0.0
+    # buckets devueltos por la API según el plan tarifario:
+    # TRT → {"PUNTA","LLANO","VALLE"}; TRD → {"PUNTA","F_PUNTA"}; TRS → {"TRS"}
+    consumption_by_tou_kwh: dict[str, float] = field(default_factory=dict)
     is_interrupted: bool = False
     devices: list[_DeviceData] = field(default_factory=list)
+
+    @property
+    def plan_code(self) -> str:
+        return PLAN_BY_TARIFF.get(self.service.tariff, DEFAULT_PLAN)
+
+    @property
+    def total_consumption_kwh(self) -> float:
+        return sum(self.consumption_by_tou_kwh.values())
 
 
 @dataclass
@@ -74,7 +82,7 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
 
     async def async_login(self) -> None:
         # Importación tardía para que `requirements` se haya instalado.
-        from ute_client import UteClient
+        from .api import UteClient
 
         self._client = UteClient()
         await self._client.bootstrap()
@@ -86,7 +94,7 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
             self._client = None
 
     async def _async_update_data(self) -> UteData:
-        from ute_client import UteAuthError
+        from .api import UteAuthError
 
         if self._client is None:
             await self.async_login()
@@ -117,17 +125,13 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                     sd = _ServiceData(service=svc)
                     tous = await self._client.consumption_by_tou(
                         svc.service_point_id,
-                        plan=PLAN_DEFAULT,
+                        plan=sd.plan_code,
                         date_from=start,
                         date_to=end,
                     )
-                    for t in tous:
-                        if t.tou == "PUNTA":
-                            sd.consumption_punta_kwh = t.consumption
-                        elif t.tou == "LLANO":
-                            sd.consumption_llano_kwh = t.consumption
-                        elif t.tou == "VALLE":
-                            sd.consumption_valle_kwh = t.consumption
+                    sd.consumption_by_tou_kwh = {
+                        t.tou: t.consumption for t in tous
+                    }
                     status = await self._client.supply_status(
                         acc.account_id, svc.service_agreement_id, svc.service_point_id
                     )

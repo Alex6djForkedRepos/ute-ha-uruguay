@@ -26,7 +26,7 @@ class UteEnergyConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            from ute_client import UteAuthError, UteClient
+            from .api import UteAuthError, UteClient
 
             client = UteClient()
             try:
