@@ -1,7 +1,80 @@
 # UTE Mobile API — Protocol Reference
 
-> **Versión:** v0.5 (lectura upstream 2023 + análisis estático del `libapp.so` v1.0.40, 2026-05-04).
-> **Estado:** El upstream-2023 ya **NO refleja el protocolo real**. La app es Flutter (Dart-AOT compilado a `libapp.so`), migró a OAuth 2.0, y cambió el base-path a `/customersapp/`. Las secciones marcadas `[OBSOLETO]` son del upstream-2023 y se mantienen como referencia histórica; las marcadas `[NUEVO]` salen del análisis estático y serán confirmadas con captura mitm.
+> **Versión:** v1.0 (captura mitm real desde AVD x86_64+ARM64 translation, 2026-05-04 21:14).
+> **Estado:** Validado contra captura real de `uy.com.ute.customers` v1.0.40. App Flutter Dart-AOT, base API `/customersapp/`, auth federada via IdentityServer propio de UTE → id.gub.uy. **No hace falta hardcodear secrets**: la app se autoconfigura via `POST /customers/setup` que devuelve client_ids/secrets/endpoints en runtime.
+
+## 🔑 Bootstrap zero-secret: el endpoint que cambia todo
+
+Apenas la app arranca y antes del login, hace 4 requests obligatorios. El crítico es el #3:
+
+```
+1. GET  /customersapp/flags/SecurityChecksBypass
+   → {"active": false}                              # feature flag (server-side disable de checks)
+
+2. POST /customersapp/integrity-check
+   {"OS":0,"payload":"<SHA-256 de la firma del APK>"}
+   → 200 (vacío)                                    # server valida vs whitelist; si tampered=true responde error
+
+3. POST /customersapp/customers/setup
+   {"registrationId":"","deviceInfo":[]}
+   → {"uniqueId":"...uuid...",
+      "oAuthConfiguration":{
+        "authority": "https://identityserver.ute.com.uy",
+        "defaultSite": "https://clientes.ute.com.uy",
+        "client":  "customers_mobile_app",
+        "secret":  "<UUID>",                        # ⚠️ secret rotado por server
+        "scope":   "customers.accounts",
+        "gubUyClient":  "<id-numérico-en-id.gub.uy>",
+        "gubUySecret":  "<secret-rotado>",
+        "gubUyAuthEndpoint":  "https://auth.iduruguay.gub.uy/oidc/v1/authorize",
+        "gubUyTokenEndpoint": "https://auth.iduruguay.gub.uy/oidc/v1/token"
+      }}
+
+4. POST /customersapp/customers/event
+   {"uniqueId":"<del-setup>", "eventName":"sec_check_emulator_failed", "eventData":null}
+   → 200                                            # telemetría de checks anti-tamper
+```
+
+**Implicación para el plugin HA**: no hardcodeamos secrets en el repo. Cada vez que el plugin arranca:
+1. Hace `POST /customers/setup` con `{"registrationId":"","deviceInfo":[]}`.
+2. Lee `oAuthConfiguration` y guarda en cache.
+3. Inicia el flujo OAuth con esos valores.
+
+Si UTE/AGESIC rotan client_secret, el plugin lo recoge automáticamente en el próximo bootstrap. Sin riesgo de que el plugin se rompa por revocación.
+
+## Headers reales (capturados)
+
+```
+user-agent: Dart/3.7 (dart:io)             # Flutter HttpClient default — NO X-Client-Type ni nada custom
+content-type: application/json; charset=utf-8
+accept-encoding: gzip
+host: rocme.ute.com.uy
+```
+
+El upstream-2023 mandaba `X-Client-Type: Android` y otros headers fingerprint — **la app real 2026 no los manda**. Solo Dart/3.7 default. Eso facilita la implementación: cualquier HTTP client respeta los defaults.
+
+Cookies: el server setea una `<hash>=<value>; HttpOnly; Secure; SameSite=None` por response (sticky session via cookie). Hay que mantenerla en una `Session` persistente en el cliente.
+
+## Server stack identificado
+
+`server: Kestrel` ⇒ ASP.NET Core. Concuerda con `/connect/token` patrón IdentityServer4 (Duende post-2022).
+
+## Flujo OAuth efectivo (broker UTE → id.gub.uy)
+
+UTE NO va directo a id.gub.uy. Tiene un broker IdentityServer propio (`identityserver.ute.com.uy`) que delega a id.gub.uy. La app móvil habla con UTE; UTE coordina con AGESIC.
+
+```
+┌─────────┐  /authorize  ┌─────────────────────────┐  /authorize  ┌──────────────────────┐
+│ App UTE │ ───────────▶ │ identityserver.ute.com.uy│ ───────────▶ │ auth.iduruguay.gub.uy│
+│         │              │  (IdentityServer/Duende)│              │  (AGESIC, OIDC)       │
+│         │ ◀─────────── │  client=customers_mobile│ ◀─────────── │  client=292015        │
+│         │   token UTE  │                         │   token gub  │                       │
+└─────────┘              └─────────────────────────┘              └──────────────────────┘
+   ↓ Bearer <UTE-token>
+   GET /customersapp/...
+```
+
+Token que UTE expone al cliente final es el que UTE emite (no el de gub.uy). El cliente solo necesita autenticarse contra `identityserver.ute.com.uy/connect/token` con `client=customers_mobile_app`+`secret`+`scope=customers.accounts`. **El delegado a gub.uy lo maneja UTE internamente** durante el flujo `/authorize`.
 
 ## ⚠️ Cambios estructurales desde el upstream
 

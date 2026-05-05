@@ -14,40 +14,37 @@ from mitmproxy import http
 import json
 
 
-_truthy_payloads = [
-    # shapes posibles ordenados por probabilidad
-    {"value": True, "data": True, "result": True, "success": True, "enabled": True},
-]
+# Schema real observado en captura: {"active": <bool>}.
+_TRUTHY = {"active": True}
 
-# variantes para body=true sin envoltorio
-_truthy_raw = "true"
+
+def _is_target(flow: http.HTTPFlow) -> bool:
+    # pretty_host usa el Host header / SNI, NO la IP destino.
+    host = flow.request.pretty_host or flow.request.host
+    if "rocme.ute.com.uy" not in host:
+        return False
+    return "/flags/SecurityChecksBypass" in flow.request.path
 
 
 class SecurityChecksBypass:
-    """Devuelve siempre true al flag para que la app no chequee tamper."""
+    """Forzar 'active: true' al flag para que la app no aborte por
+    emulator/tampered/compromised."""
 
     def request(self, flow: http.HTTPFlow) -> None:
-        if "rocme.ute.com.uy" not in flow.request.host:
+        if not _is_target(flow):
             return
-        if "/flags/SecurityChecksBypass" not in flow.request.path:
-            return
-        # corto el request, respondo sin pasar por el server
         flow.response = http.Response.make(
             200,
-            json.dumps(_truthy_payloads[0]).encode("utf-8"),
+            json.dumps(_TRUTHY).encode("utf-8"),
             {"content-type": "application/json; charset=utf-8"},
         )
 
     def response(self, flow: http.HTTPFlow) -> None:
-        # Por si llegó al backend (no debería con request() activo).
-        # Sobrescribimos para garantizar el bypass.
-        if "rocme.ute.com.uy" not in flow.request.host:
-            return
-        if "/flags/SecurityChecksBypass" not in flow.request.path:
+        if not _is_target(flow):
             return
         flow.response.status_code = 200
         flow.response.headers["content-type"] = "application/json; charset=utf-8"
-        flow.response.set_text(json.dumps(_truthy_payloads[0]))
+        flow.response.set_text(json.dumps(_TRUTHY))
 
 
 addons = [SecurityChecksBypass()]

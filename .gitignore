@@ -25,3 +25,29 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Tooling clones / venvs / binarios externos (regenerables)
+tooling/blutter/
+tooling/blutter-venv/
+tooling/bin/jadx/
+tooling/bin/bundletool.jar
+tooling/mitm.log
+
+# Outputs de RE regenerables desde los APKs
+captures/jadx-out/
+captures/blutter-out/
+captures/apk/*/arm64_extract/
+captures/apk/*/decoded/
+captures/apk/*/patched/
+captures/apk/*/*.apks
+
+# Android SDK / AVDs (regenerable, multi-GB)
+tooling/android-sdk/
+
+# apk-mitm idsig files
+captures/apk/*/release/
+captures/apk/*/*.idsig
+
+# Python venv del cliente
+client-py/.venv/
+client-py/*.egg-info/
