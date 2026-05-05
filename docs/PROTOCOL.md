@@ -612,7 +612,25 @@ El binary tiene `diarySchedule` como field hint. Body shape exacto sigue descono
 
 **Android Emulator 36.5.11 (AVD)**: `netsimd` (proceso aparte que simula WiFi virtual) tiene un bug en `external/netsim+/rust/libslirp-rs/src/libslirp.rs:338` — crashea con SIGSEGV cuando recibe `502 Bad Gateway` desde el HTTP proxy. Cuando muere, qemu-system aborta con `bad_function_call was thrown in -fno-exceptions mode`. Mitigaciones aplicadas en `tooling/run-avd.sh` (`-no-window`, `-idle-grpc-timeout 0`, `-network-user-mode-options "ipv6=off"`) extienden la vida del AVD pero NO previenen el crash final tras unos `adb shell input` consecutivos.
 
-**Redroid (Android-in-Docker)**: `tooling/run-redroid.sh`. Boot estable y conscrypt acepta el cert mitm via volume bind-mount (system + apex post-boot con `toybox mount --bind`). Pero la app UTE detecta `is compromised: true` por TRES indicadores de root presentes en redroid (`ro.build.tags=test-keys`, `ro.debuggable=1`, `/system/xbin/su`) y aborta antes del primer request al backend — `flags/SecurityChecksBypass` ni se invoca. `setprop ro.*` falla porque son read-only properties; `mount --bind /dev/null /system/xbin/su` falla porque `/dev/null` es char-device (mount intenta loopback). Sin Magisk Hide o un hook Frida sobre la función Dart `is compromised`, no hay forma de pasar este check.
+**Redroid (Android-in-Docker)**: `tooling/run-redroid.sh`. Boot estable y conscrypt acepta el cert mitm via volume bind-mount (system + apex post-boot con `toybox mount --bind`). Pero la app UTE detecta `is compromised: true` y aborta antes del primer request al backend — `flags/SecurityChecksBypass` ni se invoca.
+
+Probamos **enmascarar root** via overlay del filesystem antes de boot:
+
+```bash
+# Extraer image base, modificar prop, eliminar /system/xbin/su, montar como volumes
+docker run \
+  -v /tmp/redroid-overlay/build.prop:/system/build.prop:ro \
+  -v /tmp/redroid-overlay/xbin:/system/xbin:ro \           # sin su
+  -v /tmp/redroid-cacerts/system:/system/etc/security/cacerts:ro \
+  ...
+```
+
+Con `ro.build.tags=release-keys`, `ro.debuggable=0`, `/system/xbin/su` eliminado, `getprop` confirma los nuevos valores y `ls /system/xbin/su` devuelve "no such file" — pero la app **igual detecta `is compromised: true`**. Hay otro vector de detección no identificado (probable `ro.boot.verifiedbootstate`, `/sbin/su`, capabilities del init namespace, o un check en la lib `flutter_jailbreak_detection`/similar).
+
+No hay imagen oficial `redroid:*-magisk-*` (verificado con docker hub API). Bypass del check requeriría:
+- Build custom redroid con Magisk via [redroid-script](https://github.com/ayasa520/redroid-script) (~1h setup).
+- Frida hook sobre la función Dart que devuelve `is compromised` (offset desconocido en el AOT, requiere análisis adicional con blutter + pattern match).
+- Patch binario de la string `"sec_check_compromised_failed"` o el bool result en `libapp.so`, re-firmar el APK.
 
 ### Recomendación final
 
