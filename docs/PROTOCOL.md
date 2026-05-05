@@ -599,8 +599,28 @@ Magnitudes conocidas por `tipoLecturaMGMI`:
 - [ ] Otros `Name` válidos en `/misc/behaviour`.
 - [ ] Headers requeridos vs opcionales (probable que `X-Client-Type` sea fingerprint).
 
+## Endpoint pendiente: schedule del Shelly UTE
+
+`PUT /customersapp/device/{deviceId}/schedule` — método HTTP confirmado:
+- POST → 405 (method not allowed)
+- GET → 422 (UnprocessableEntity con cualquier query param)
+- PUT → 500 (server error con cualquier body probado: `{}`, `{diarySchedule:[]}`, `{days:[]}`, `{monday:[],tuesday:[],...}`, `{deviceId,schedule:[]}`)
+
+El binary tiene `diarySchedule` como field hint. Body shape exacto sigue desconocido — requiere captura mitm de la app guardando un cambio en "Mi Calefón > Horario".
+
+### Bloqueadores intentados sin éxito
+
+**Android Emulator 36.5.11 (AVD)**: `netsimd` (proceso aparte que simula WiFi virtual) tiene un bug en `external/netsim+/rust/libslirp-rs/src/libslirp.rs:338` — crashea con SIGSEGV cuando recibe `502 Bad Gateway` desde el HTTP proxy. Cuando muere, qemu-system aborta con `bad_function_call was thrown in -fno-exceptions mode`. Mitigaciones aplicadas en `tooling/run-avd.sh` (`-no-window`, `-idle-grpc-timeout 0`, `-network-user-mode-options "ipv6=off"`) extienden la vida del AVD pero NO previenen el crash final tras unos `adb shell input` consecutivos.
+
+**Redroid (Android-in-Docker)**: `tooling/run-redroid.sh`. Boot estable y conscrypt acepta el cert mitm via volume bind-mount (system + apex post-boot con `toybox mount --bind`). Pero la app UTE detecta `is compromised: true` por TRES indicadores de root presentes en redroid (`ro.build.tags=test-keys`, `ro.debuggable=1`, `/system/xbin/su`) y aborta antes del primer request al backend — `flags/SecurityChecksBypass` ni se invoca. `setprop ro.*` falla porque son read-only properties; `mount --bind /dev/null /system/xbin/su` falla porque `/dev/null` es char-device (mount intenta loopback). Sin Magisk Hide o un hook Frida sobre la función Dart `is compromised`, no hay forma de pasar este check.
+
+### Recomendación final
+
+Para capturar el schedule del Shelly: **device físico no rooteado con la app oficial + HTTP Toolkit** (Android-side mitm sin reempaquetar). 5 min de captura, sin emuladores, sin parches al binario.
+
 ## Referencias
 
 - `references/ute_energy_gustavoqzdaa/` — código upstream 2023, base de este documento.
 - `captures/apk/v1.0.40/` — APKs decompilables de la app móvil actual.
 - `captures/flows/` — capturas mitmproxy (cuando estén).
+- `tooling/run-avd.sh`, `tooling/run-redroid.sh` — scripts para reproducir el setup de captura (con sus bloqueadores documentados).
