@@ -79,33 +79,57 @@ class UteClient:
     """
 
     def __init__(self, http: httpx.AsyncClient | None = None) -> None:
-        self._http = http or httpx.AsyncClient(
-            timeout=30.0,
-            headers={
-                "user-agent": USER_AGENT,
-                "accept-encoding": "gzip",
-            },
-        )
+        # `httpx.AsyncClient(...)` carga el cert bundle de forma síncrona —
+        # bloquea el event loop si se construye dentro de él. Aceptamos un
+        # AsyncClient ya construido (ideal: en HA, pasarle
+        # `homeassistant.helpers.httpx_client.get_async_client(hass)`) o lo
+        # construimos lazy en un executor en el primer await.
+        self._http_provided: httpx.AsyncClient | None = http
+        self._http_lazy: httpx.AsyncClient | None = None
         self._oauth: _OAuthConfig | None = None
         self._unique_id: str | None = None
         self._token: _Token | None = None
         self._refresh_lock = asyncio.Lock()
 
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        c = self._http_provided or self._http_lazy
+        if c is None:
+            raise RuntimeError(
+                "internal: _http accedido antes de _ensure_http(); "
+                "llamar bootstrap() o usar `async with UteClient(...)` primero"
+            )
+        return c
+
+    async def _ensure_http(self) -> None:
+        if self._http_provided is not None or self._http_lazy is not None:
+            return
+        loop = asyncio.get_running_loop()
+        self._http_lazy = await loop.run_in_executor(None, _make_default_http_client)
+
     async def __aenter__(self) -> "UteClient":
+        await self._ensure_http()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Cerrar el HTTP client subyacente. Idempotente."""
-        await self._http.aclose()
+        """Cerrar el HTTP client subyacente. Idempotente.
+
+        Sólo cerramos el client que NOSOTROS creamos. Si alguien externo nos
+        pasó uno (HA via get_async_client), su lifecycle no nos pertenece.
+        """
+        if self._http_lazy is not None:
+            await self._http_lazy.aclose()
+            self._http_lazy = None
 
     # ------------------------------------------------------------------
     # 1. Bootstrap (zero-secret): obtener oAuthConfiguration del server.
     # ------------------------------------------------------------------
     async def bootstrap(self, registration_id: str = "", device_info: list | None = None) -> None:
         """Llamar UNA VEZ antes de login. Obtiene client_id/secret y unique_id."""
+        await self._ensure_http()
         # GET flag de bypass — si está activo, la app salta integrity check.
         # No es estrictamente necesario para nosotros, pero seguimos el patrón
         # de la app y un fallo acá es informativo, no bloquea login.
@@ -349,3 +373,15 @@ def _parse_number(text: str) -> float:
         return float(s)
     except ValueError as e:
         raise UteApiError(f"esperaba número plano, recibí: {s[:80]!r}") from e
+
+
+def _make_default_http_client() -> httpx.AsyncClient:
+    """Constructor sync — pensado para invocarse en executor para no
+    bloquear el event loop con la inicialización del SSL context."""
+    return httpx.AsyncClient(
+        timeout=30.0,
+        headers={
+            "user-agent": USER_AGENT,
+            "accept-encoding": "gzip",
+        },
+    )
