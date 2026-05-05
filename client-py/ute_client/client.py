@@ -329,6 +329,21 @@ class UteClient:
         )
         return r.json()
 
+    async def peak_window(
+        self, account_id: str, service_agreement_id: str
+    ) -> dict[str, Any]:
+        """Horario pico configurado (TRD/TRT): ventana de tarifa más cara.
+
+        → {"meterPeakStart": int, "selectedPeakStartDescription": "17:00 a 21:00",
+           "meterPeakStartDescription": "17:00 a 21:00", "selectedPeakStartDate": "...",
+           "meterPeakStartDate": "...", "meterId": "...", "servicePointId": "...",
+           "processPending": bool, ...}
+        """
+        r = await self._get(
+            f"{API_BASE}/accounts/{account_id}/services/{service_agreement_id}/peak"
+        )
+        return r.json()
+
     async def devices(self, service_point_id: str) -> dict[str, Any]:
         """Lista de devices smart (Shelly UTE) vinculados al servicePoint.
 

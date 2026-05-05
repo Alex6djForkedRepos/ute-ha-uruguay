@@ -28,6 +28,7 @@
       "consumption_total": { "name": "Consumo total (mes)" },
       "total_debt": { "name": "Deuda total" },
       "supply_status": { "name": "Estado del suministro" },
+      "peak_window": { "name": "Horario pico" },
       "billing_spending": { "name": "Importe estimado del período" },
       "billing_consumption": { "name": "Consumo del período" },
       "unpaid_invoices": { "name": "Facturas impagas" },

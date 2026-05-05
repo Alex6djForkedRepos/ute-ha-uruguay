@@ -40,6 +40,7 @@ class _ServiceData:
     # TRT → {"PUNTA","LLANO","VALLE"}; TRD → {"PUNTA","F_PUNTA"}; TRS → {"TRS"}
     consumption_by_tou_kwh: dict[str, float] = field(default_factory=dict)
     is_interrupted: bool = False
+    peak_window: str = ""  # ej. "17:00 a 21:00"
     devices: list[_DeviceData] = field(default_factory=list)
 
     @property
@@ -144,6 +145,19 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                     sd.consumption_by_tou_kwh = {
                         t.tou: t.consumption for t in tous
                     }
+                    # Horario pico (sólo aplica TRD/TRT — TRS no tiene punta).
+                    if svc.tariff in ("TRD", "TRT"):
+                        try:
+                            peak = await self._client.peak_window(
+                                acc.account_id, svc.service_agreement_id
+                            )
+                            sd.peak_window = (
+                                peak.get("selectedPeakStartDescription")
+                                or peak.get("meterPeakStartDescription")
+                                or ""
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            _LOGGER.debug("peak_window failed: %s", e)
                     status = await self._client.supply_status(
                         acc.account_id, svc.service_agreement_id, svc.service_point_id
                     )

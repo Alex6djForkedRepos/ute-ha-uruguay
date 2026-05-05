@@ -51,6 +51,9 @@ async def async_setup_entry(
             entities.append(_TotalConsumptionSensor(coordinator, account_id, sd))
             # Estado del suministro (texto, no on/off)
             entities.append(_StatusSensor(coordinator, account_id, sd))
+            # Horario pico (solo si hay datos: TRD/TRT)
+            if sd.peak_window:
+                entities.append(_PeakWindowSensor(coordinator, account_id, sd))
         entities.append(_DebtSensor(coordinator, account_id))
         entities.append(_BillingSpendingSensor(coordinator, account_id))
         entities.append(_BillingConsumptionSensor(coordinator, account_id))
@@ -155,6 +158,31 @@ class _StatusSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
         for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
             if sd.service.service_point_id == self._service_point_id:
                 return "INTERRUMPIDO" if sd.is_interrupted else "OK"
+        return None
+
+
+class _PeakWindowSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Ventana de horario pico (ej. '17:00 a 21:00') del suministro."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "peak_window"
+    _attr_name = "Horario pico"
+    _attr_icon = "mdi:clock-alert"
+
+    def __init__(
+        self, coordinator: UteCoordinator, account_id: str, sd: _ServiceData
+    ) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._service_point_id = sd.service.service_point_id
+        self._attr_unique_id = f"{account_id}_{sd.service.service_point_id}_peak_window"
+        self._attr_device_info = _device_info(account_id, sd)
+
+    @property
+    def native_value(self) -> Any:
+        for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
+            if sd.service.service_point_id == self._service_point_id:
+                return sd.peak_window or None
         return None
 
 
