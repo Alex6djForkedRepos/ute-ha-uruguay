@@ -82,6 +82,7 @@ async def async_setup_entry(
         entities.append(_DebtSensor(coordinator, account_id))
         entities.append(_BillingSpendingSensor(coordinator, account_id))
         entities.append(_BillingConsumptionSensor(coordinator, account_id))
+        entities.append(_UnpaidCountSensor(coordinator, account_id))
     async_add_entities(entities)
 
 
@@ -231,6 +232,30 @@ class _BillingConsumptionSensor(CoordinatorEntity[UteCoordinator], SensorEntity)
         if not bp:
             return {}
         return {"period_start": bp.initial_date, "period_end": bp.final_date}
+
+
+class _UnpaidCountSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Cantidad de facturas impagas."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "unpaid_invoices"
+    _attr_name = "Facturas impagas"
+    _attr_icon = "mdi:file-document-alert"
+
+    def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._attr_unique_id = f"{account_id}_unpaid_count"
+        sd_first = next(
+            iter(coordinator.data.services_by_account.get(account_id, [])), None
+        )
+        self._attr_device_info = (
+            _device_info(account_id, sd_first) if sd_first else None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        return self.coordinator.data.unpaid_count_by_account.get(self._account_id, 0)
 
 
 def _device_info(account_id: str, sd: _ServiceData) -> DeviceInfo:

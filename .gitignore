@@ -56,3 +56,6 @@ client-py/*.egg-info/
 client-ts/node_modules/
 client-ts/dist/
 client-ts/package-lock.json
+*.png
+client-py/probe*.py
+captures/apk/*/splits/
