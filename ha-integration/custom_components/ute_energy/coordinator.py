@@ -61,12 +61,21 @@ class _BillingPeriod:
 
 
 @dataclass
+class _LastInvoice:
+    doc_number: str  # "T 7507283"
+    expiration_date: str  # YYYY-MM-DD
+    total_amount: float  # UYU
+    has_debt: bool
+
+
+@dataclass
 class UteData:
     accounts: dict[str, dict[str, Any]] = field(default_factory=dict)
     services_by_account: dict[str, list[_ServiceData]] = field(default_factory=dict)
     total_debt_by_account: dict[str, float] = field(default_factory=dict)
     unpaid_count_by_account: dict[str, int] = field(default_factory=dict)
     billing_period_by_account: dict[str, _BillingPeriod] = field(default_factory=dict)
+    last_invoice_by_account: dict[str, _LastInvoice] = field(default_factory=dict)
 
 
 class UteCoordinator(DataUpdateCoordinator[UteData]):
@@ -126,6 +135,21 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                 data.unpaid_count_by_account[acc.account_id] = len(
                     unpaid.get("billsUnpaid") or []
                 )
+                # Última factura emitida (la más reciente del histórico).
+                try:
+                    invoices = await self._client.invoices_history(
+                        acc.account_id, count=1
+                    )
+                    if invoices:
+                        inv = invoices[0]
+                        data.last_invoice_by_account[acc.account_id] = _LastInvoice(
+                            doc_number=str(inv.get("docNumber") or ""),
+                            expiration_date=str(inv.get("expirationDate") or "")[:10],
+                            total_amount=float(inv.get("totalAmount") or 0),
+                            has_debt=bool(inv.get("hasDebt")),
+                        )
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.debug("invoices_history failed: %s", e)
                 summary = await self._client.billing_period_summary(acc.account_id)
                 data.billing_period_by_account[acc.account_id] = _BillingPeriod(
                     initial_date=summary.initial_date,

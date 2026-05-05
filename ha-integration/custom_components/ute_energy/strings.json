@@ -32,6 +32,7 @@
       "billing_spending": { "name": "Importe estimado del período" },
       "billing_consumption": { "name": "Consumo del período" },
       "unpaid_invoices": { "name": "Facturas impagas" },
+      "last_invoice": { "name": "Última factura" },
       "device_power": { "name": "Potencia instantánea" },
       "device_voltage": { "name": "Voltaje" },
       "device_rssi": { "name": "RSSI" },

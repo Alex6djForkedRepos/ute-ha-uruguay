@@ -321,6 +321,36 @@ class UteClient:
         r = await self._get(f"{API_BASE}/invoices/totalDebt/{account_id}")
         return _parse_number(r.text)
 
+    async def invoices_history(
+        self, account_id: str, count: int = 36
+    ) -> list[dict[str, Any]]:
+        """Histórico de las últimas N facturas (default 36 ≈ 3 años).
+
+        → [{"invoiceId":"029360441551", "docNumber":"T 7507283",
+            "expirationDate":"2026-05-04T00:00:00", "totalAmount":4225,
+            "previousDebt":0, "monthCharges":4225, "totalDebt":0,
+            "hasDebt":false, "month":0, "year":0}, ...]
+        """
+        r = await self._get(f"{API_BASE}/invoices/{account_id}/{count}")
+        return r.json() if r.text.strip() else []
+
+    async def consumption_chart(
+        self, account_id: str, service_agreement_id: str, kind: str = "activeconsumption"
+    ) -> dict[str, Any]:
+        """Curva mensual histórica de consumo.
+
+        `kind` ∈ {activeconsumption, consumptionevolution, powerconsumption,
+        reactiveconsumption}. Retorna 204 No Content cuando UTE no tiene esa
+        serie para el cliente (powerconsumption sólo aplica a clientes
+        industriales, p.ej.).
+        """
+        r = await self._get(
+            f"{API_BASE}/invoices/charts/{account_id}/{kind}/{service_agreement_id}"
+        )
+        if r.status_code == 204 or not r.text.strip():
+            return {"series": [], "averageConsumption": 0.0}
+        return r.json()
+
     async def supply_status(
         self, account_id: str, service_agreement_id: str, service_point_id: str
     ) -> dict[str, Any]:

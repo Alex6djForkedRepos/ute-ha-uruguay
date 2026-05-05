@@ -58,6 +58,8 @@ async def async_setup_entry(
         entities.append(_BillingSpendingSensor(coordinator, account_id))
         entities.append(_BillingConsumptionSensor(coordinator, account_id))
         entities.append(_UnpaidCountSensor(coordinator, account_id))
+        if account_id in coordinator.data.last_invoice_by_account:
+            entities.append(_LastInvoiceSensor(coordinator, account_id))
         for sd in services:
             for dev in sd.devices:
                 for desc in _DEVICE_SENSORS:
@@ -270,6 +272,44 @@ class _BillingConsumptionSensor(CoordinatorEntity[UteCoordinator], SensorEntity)
         if not bp:
             return {}
         return {"period_start": bp.initial_date, "period_end": bp.final_date}
+
+
+class _LastInvoiceSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Importe de la última factura (UYU); doc + vencimiento como atributos."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_invoice"
+    _attr_name = "Última factura"
+    _attr_native_unit_of_measurement = "UYU"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:receipt"
+
+    def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._attr_unique_id = f"{account_id}_last_invoice"
+        sd_first = next(
+            iter(coordinator.data.services_by_account.get(account_id, [])), None
+        )
+        self._attr_device_info = (
+            _device_info(account_id, sd_first) if sd_first else None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        inv = self.coordinator.data.last_invoice_by_account.get(self._account_id)
+        return round(inv.total_amount, 2) if inv else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        inv = self.coordinator.data.last_invoice_by_account.get(self._account_id)
+        if not inv:
+            return {}
+        return {
+            "doc_number": inv.doc_number,
+            "expiration_date": inv.expiration_date,
+            "has_debt": inv.has_debt,
+        }
 
 
 class _UnpaidCountSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
