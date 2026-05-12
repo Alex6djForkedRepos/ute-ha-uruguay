@@ -16,8 +16,14 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 PROXY_HOST="${PROXY_HOST:-192.168.2.10}"
 PROXY_PORT="${PROXY_PORT:-8080}"
 AVD_NAME="${AVD_NAME:-ute_capture}"
+HEADLESS="${HEADLESS:-1}"
 
-echo ">> launching $AVD_NAME with HTTP proxy $PROXY_HOST:$PROXY_PORT"
+WINDOW_FLAG=()
+if [ "$HEADLESS" = "1" ]; then
+  WINDOW_FLAG=(-no-window)
+fi
+
+echo ">> launching $AVD_NAME with HTTP proxy $PROXY_HOST:$PROXY_PORT (headless=$HEADLESS)"
 
 # -no-snapshot-load: arranque limpio cada vez
 # -no-snapshot-save: no guardar state al cerrar (evita corrupción cross-run)
@@ -29,6 +35,12 @@ echo ">> launching $AVD_NAME with HTTP proxy $PROXY_HOST:$PROXY_PORT"
 #    es "Netsim Wifi ipv6:[::1]:N is gone due to Socket closed" seguido de
 #    "bad_function_call was thrown in -fno-exceptions mode" y abort. Pasa
 #    durante captura cuando entre `adb shell input` consecutivos hay sleeps.
+# -feature -Wifi -feature -VirtioWifi: CRITICAL — bypassea netsimd, que tiene
+#    un bug de SIGSEGV en libslirp-rs/src/libslirp.rs:338 al procesar 502 desde
+#    el http-proxy. Sin Wifi, el guest queda con eth0 sobre slirp interno de
+#    qemu (modelo legacy pre-36.x) y el http-proxy se aplica ahí — ni netsimd
+#    ni mac80211_hwsim se involucran. Internet sigue funcionando vía Ethernet
+#    y la app no distingue (no chequea ConnectivityManager.TYPE_WIFI).
 exec emulator \
   -avd "$AVD_NAME" \
   -wipe-data \
@@ -40,5 +52,7 @@ exec emulator \
   -gpu swiftshader_indirect \
   -accel on \
   -idle-grpc-timeout 0 \
-  -no-window \
+  "${WINDOW_FLAG[@]}" \
+  -feature -Wifi \
+  -feature -VirtioWifi \
   -network-user-mode-options "ipv6=off"
