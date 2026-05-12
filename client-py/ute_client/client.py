@@ -321,6 +321,32 @@ class UteClient:
         r = await self._get(f"{API_BASE}/invoices/totalDebt/{account_id}")
         return _parse_number(r.text)
 
+    async def unpaid_invoices(self, account_id: str) -> dict[str, Any]:
+        """Resumen canónico de facturas impagas. Reemplaza al legacy
+        `/invoices/totalDebt/{id}` (que sólo devolvía el monto plano).
+
+        → {"billsUnpaid": [{"invoiceId":..., "docNumber":..., "expirationDate":...,
+                            "totalAmount":..., "monthCharges":..., "totalDebt":...,
+                            "hasDebt": bool, ...}, ...],
+           "totalDebt": float,
+           "messageCode": str|None,
+           "messageDesc": str|None}
+        """
+        r = await self._get(f"{API_BASE}/invoices/unpaids/{account_id}")
+        if r.status_code == 204 or not r.text.strip():
+            return {"billsUnpaid": [], "totalDebt": 0, "messageCode": None, "messageDesc": None}
+        return r.json()
+
+    async def invoice_pdf(self, invoice_id: str, doc_number: str) -> bytes:
+        """Descarga el PDF de una factura concreta.
+
+        `doc_number` viene de `invoices_history()` ítem (ej. "T 7507283").
+        Algunas variantes esperan url-encoded; pasar el string raw funciona en
+        la captura mitm de la app oficial.
+        """
+        r = await self._get(f"{API_BASE}/invoices/file/{invoice_id}/{doc_number}")
+        return r.content
+
     async def invoices_history(
         self, account_id: str, count: int = 36
     ) -> list[dict[str, Any]]:
@@ -407,6 +433,91 @@ class UteClient:
     async def messages_unread(self) -> int:
         r = await self._get(f"{API_BASE}/messages/unread")
         return int(_parse_number(r.text))
+
+    async def service_quality(
+        self, account_id: str, service_agreement_id: str
+    ) -> dict[str, Any]:
+        """Calidad de servicio + % renovable de la matriz UTE.
+
+        → {"demand": {"renewableSources": "99,5 %"},
+           "globalServiceQuality": "99,9 %",
+           "departmentServiceQuality": "99,9 %"}
+
+        Los porcentajes vienen como string con coma decimal y sufijo " %".
+        Útil para sensores: % renovable nacional, calidad país, calidad depto.
+        """
+        r = await self._get(
+            f"{API_BASE}/accounts/{account_id}/services/{service_agreement_id}/quality"
+        )
+        return r.json()
+
+    async def service_status_short(
+        self, account_id: str, service_agreement_id: str
+    ) -> dict[str, Any]:
+        """Status corto del servicio (≠ supply_status, que requiere servicePointId).
+
+        → {"code": "0", "description": null}  cuando todo OK.
+        Code distinto de "0" indica novedades administrativas o de suministro.
+        """
+        r = await self._get(
+            f"{API_BASE}/accounts/{account_id}/services/{service_agreement_id}/status"
+        )
+        return r.json()
+
+    async def device_categories(self) -> list[dict[str, str]]:
+        """Catálogo estático de categorías de electrodomésticos.
+
+        → [{"categoryId":"6","description":"Aire acondicionado"}, ...]
+        El servicePointId del path da igual: la respuesta es la misma para
+        toda la base. Útil para resolver `categoryId` → label en UI.
+        """
+        r = await self._get(f"{API_BASE}/device/0/category")
+        body = r.json()
+        return body.get("categories", [])
+
+    async def device_check(self, device_id: int) -> bool:
+        """Health check binario del device. Devuelve `true` cuando UTE puede
+        contactar el Shelly y leer su estado, `false` durante reconexiones.
+        """
+        r = await self._get(f"{API_BASE}/device/{device_id}/check")
+        return r.text.strip().lower() == "true"
+
+    async def device_online_status(self, device_id: int) -> str:
+        """Estado online/offline del device → {"status":"online"|"offline"}.
+
+        Endpoint barato (mucho más liviano que `device_status`), pensado para
+        polling de presencia.
+        """
+        r = await self._get(f"{API_BASE}/device/{device_id}/status/check")
+        return str(r.json().get("status", "unknown"))
+
+    async def home_overview(
+        self, account_id: str, version: int = 1
+    ) -> dict[str, Any]:
+        """Discovery de zonas/widgets habilitados para esta cuenta.
+
+        → {"suppliesCount": int,
+           "zones": [{"zoneId":"OV01","widgetId":"AccountTotalDebtWidget"}, ...],
+           "shortcuts": [{"id":int,"leadingIcon":str,"title":str,...}, ...]}
+
+        La integración HA puede usar `zones` para decidir qué sensores
+        instanciar dinámicamente (no todos los servicios tienen TimeBand).
+        """
+        r = await self._get(
+            f"{API_BASE}/overview/{account_id}/version/{version}"
+        )
+        return r.json()
+
+    async def mark_logged_in(self, unique_id: str) -> dict[str, Any]:
+        """Notifica al backend que la sesión está activa y recibe behaviours
+        (banners/promos a mostrar). La app la llama después de cada login;
+        el backend devuelve `{"behaviours": [...]}` con flags de UI.
+        """
+        r = await self._post(
+            f"{API_BASE}/customers/loggedin",
+            json={"uniqueId": unique_id},
+        )
+        return r.json()
 
 
 def _parse_number(text: str) -> float:

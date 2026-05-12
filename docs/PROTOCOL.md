@@ -359,13 +359,97 @@ GET /customersapp/invoices/totalDebt/{accountId}
 → <número plano JSON, ej. 0 ó 1234.50>
 ```
 
-### Otros endpoints capturados (TODO documentar bodies cuando se naveguen)
+### Calidad de servicio + % renovable (capturado 2026-05-06)
 
-- `GET /customersapp/messages/unread` → integer plano.
-- `POST /customersapp/customers/loggedin` `{"uniqueId":"<setup-id>"}` → `{"behaviours":[]}`.
-- `POST /customersapp/customers/event` `{uniqueId,eventName,eventData}` (telemetría).
-- `GET /customersapp/overview/{accountId}/version/{appVersionCode}` → metadata UI (widgets/shortcuts).
+```
+GET /customersapp/accounts/{accountId}/services/{serviceAgreementId}/quality
+→ {
+    "demand": {"renewableSources": "99,5 %"},
+    "globalServiceQuality": "99,9 %",
+    "departmentServiceQuality": "99,9 %"
+  }
+```
+
+Porcentajes vienen como string con coma decimal y sufijo " %". Cliente expone vía `service_quality()`. Útil como sensores informativos del % renovable nacional y la calidad del servicio (país + departamento).
+
+### Status corto del servicio (capturado 2026-05-06)
+
+```
+GET /customersapp/accounts/{accountId}/services/{serviceAgreementId}/status
+→ {"code": "0", "description": null}    (todo OK)
+```
+
+Distinto de `supply_status` (que requiere `servicePointId` extra y devuelve `{isInterrupted, timestamp, supplyStatus, supplyStatusMessages}`). Cliente expone vía `service_status_short()`.
+
+### Catálogo de categorías de electrodomésticos (capturado 2026-05-06)
+
+```
+GET /customersapp/device/{anyId}/category
+→ {"categories": [
+    {"categoryId":"6","description":"Aire acondicionado"},
+    {"categoryId":"13","description":"Caloventilador"},
+    {"categoryId":"7","description":"Cocina"},
+    {"categoryId":"9","description":"Heladera"},
+    {"categoryId":"10","description":"Lavarropas"},
+    {"categoryId":"14","description":"Microondas"},
+    {"categoryId":"11","description":"Secarropas"},
+    {"categoryId":"1","description":"Termotanque"},
+    {"categoryId":"3","description":"Vehículo eléctrico"}
+  ]}
+```
+
+El path requiere un id pero la respuesta es global (data static). Cliente expone vía `device_categories()`. Útil para mapear `categoryId` → label.
+
+### Health checks de device (capturados 2026-05-06)
+
+```
+GET /customersapp/device/{deviceId}/check         → "true"|"false" (texto plano)
+GET /customersapp/device/{deviceId}/status/check  → {"status":"online"|"offline"}
+```
+
+Endpoints baratos para polling de presencia (más livianos que `device/{id}/status`). Cliente expone vía `device_check()` y `device_online_status()`.
+
+### Discovery de zonas + shortcuts del home (capturado 2026-05-06)
+
+```
+GET /customersapp/overview/{accountId}/version/{appVersionCode}
+→ {
+    "suppliesCount": 1,
+    "zones": [
+      {"zoneId":"OV01","widgetId":"AccountTotalDebtWidget"},
+      {"zoneId":"OV02","widgetId":"SupplyStatusWidget"},
+      {"zoneId":"OV03","widgetId":"TimeBandConsumptionChartWidget"}
+    ],
+    "shortcuts": [
+      {"id":1,"leadingIcon":"plug","title":"Reclamo por falta de energía", ...}
+    ]
+  }
+```
+
+Cliente expone vía `home_overview()`. Permite a la integración decidir dinámicamente qué sensores instanciar (no todas las cuentas tienen `TimeBandConsumptionChartWidget`, p.ej. clientes industriales).
+
+### Notificación de login (capturado 2026-05-06)
+
+```
+POST /customersapp/customers/loggedin
+body: {"uniqueId":"<setup-id>"}
+→ {"behaviours":[]}
+```
+
+La app la llama después de cada login exitoso. Backend devuelve flags de UI (banners/promos). Cliente expone vía `mark_logged_in()`.
+
+### Telemetría / anti-tamper
+
+- `POST /customersapp/customers/event` `{uniqueId,eventName,eventData}` (telemetría general).
 - `POST /customersapp/integrity-check` `{"OS":0,"payload":"<SHA APK>"}` → server-side anti-tamper.
+
+### NO existe en la app: control del Shelly UTE
+
+Confirmado 2026-05-06 con la app v1.0.40 capturando todas las pantallas: **la app oficial NO permite controlar el Shelly ni ver su horario**. Sólo se ven lecturas (`device/{id}/status` con `instantConsumption`, `voltage`, `rssi`, `isDeviceOn`, `isScheduleOn`, `isScheduleActive`, `isInBypass`, `percentageOfTotalConsumption`).
+
+**Importante**: el flag `isDeviceOn` representa el **comando** que UTE le mandó al Shelly, no el estado real del relé. Como la app no expone control, ese flag queda siempre en `false` aunque el aparato esté efectivamente prendido. La señal fiable de "está consumiendo" es `instantConsumption > 0`. La integración HA deriva el binary sensor "Consumiendo" del consumo (umbral 5 W para descartar standby), no de `isDeviceOn`.
+
+El endpoint `PUT /customersapp/device/{deviceId}/schedule` existe en strings del binary pero **no se llama desde ninguna pantalla**. Es código muerto (residual de un programa piloto) o reservado para clientes no residenciales. La integración HA queda sólo lectura para Shelly UTE; control real va via integración Shelly nativa de HA cuando el user tiene IP local del device.
 
 ### Pendiente con la app caída
 
@@ -578,7 +662,7 @@ Magnitudes conocidas por `tipoLecturaMGMI`:
 
 - HTTP `401` → token inválido o expirado (`UteApiAccessDenied`).
 - HTTP `403` → permiso insuficiente (`UteApiUnauthorized`).
-- Otros HTTP no-2xx → `UteEnergyException`.
+- Otros HTTP no-2xx → `UteApiError`.
 - HTTP 200 con `success: false` → error de aplicación; campo `errors` (array) puede traer `{ "text": "..." }` con mensaje legible.
 
 ## 9. Pendientes a validar/descubrir con la captura real
@@ -608,9 +692,11 @@ Magnitudes conocidas por `tipoLecturaMGMI`:
 
 El binary tiene `diarySchedule` como field hint. Body shape exacto sigue desconocido — requiere captura mitm de la app guardando un cambio en "Mi Calefón > Horario".
 
-### Bloqueadores intentados sin éxito
+### Bloqueadores intentados
 
-**Android Emulator 36.5.11 (AVD)**: `netsimd` (proceso aparte que simula WiFi virtual) tiene un bug en `external/netsim+/rust/libslirp-rs/src/libslirp.rs:338` — crashea con SIGSEGV cuando recibe `502 Bad Gateway` desde el HTTP proxy. Cuando muere, qemu-system aborta con `bad_function_call was thrown in -fno-exceptions mode`. Mitigaciones aplicadas en `tooling/run-avd.sh` (`-no-window`, `-idle-grpc-timeout 0`, `-network-user-mode-options "ipv6=off"`) extienden la vida del AVD pero NO previenen el crash final tras unos `adb shell input` consecutivos.
+**Android Emulator 36.5.11 (AVD)** — **RESUELTO 2026-05-05**: `netsimd` (proceso aparte que simula WiFi virtual) tiene un bug en `external/netsim+/rust/libslirp-rs/src/libslirp.rs:338` — crashea con SIGSEGV cuando procesa tráfico HTTP del proxy en ciertas condiciones. Cuando muere, qemu-system aborta con `bad_function_call was thrown in -fno-exceptions mode`.
+
+**Fix**: agregar `-feature -Wifi -feature -VirtioWifi` al lanzar el emulador. Esto deshabilita la simulación de WiFi y el guest queda con `eth0` sobre el slirp interno de qemu (modelo legacy pre-36.x); el `-http-proxy` se aplica ahí sin tocar `netsimd`. ConnectivityManager presenta el link como `MOBILE[LTE] CONNECTED` (Transports: CELLULAR), lo que la app UTE acepta sin distinguir de wifi. Bootstrap completo (`/customersapp/customers/setup` + `/customersapp/customers/event`) capturado sin crash; sobrevive `adb shell input` repetidos. Aplicado en `tooling/run-avd.sh`.
 
 **Redroid (Android-in-Docker)**: `tooling/run-redroid.sh`. Boot estable y conscrypt acepta el cert mitm via volume bind-mount (system + apex post-boot con `toybox mount --bind`). Pero la app UTE detecta `is compromised: true` y aborta antes del primer request al backend — `flags/SecurityChecksBypass` ni se invoca.
 
@@ -634,7 +720,7 @@ No hay imagen oficial `redroid:*-magisk-*` (verificado con docker hub API). Bypa
 
 ### Recomendación final
 
-Para capturar el schedule del Shelly: **device físico no rooteado con la app oficial + HTTP Toolkit** (Android-side mitm sin reempaquetar). 5 min de captura, sin emuladores, sin parches al binario.
+Con el fix `-feature -Wifi -feature -VirtioWifi` el AVD ya no es bloqueador: `tooling/run-avd.sh` bootea estable y captura tráfico real de la app oficial (firma original, integrity-check pasa server-side). La alternativa con device físico + HTTP Toolkit sigue siendo válida para capturas one-shot rápidas, pero no es necesaria para iterar en el lab.
 
 ## Referencias
 

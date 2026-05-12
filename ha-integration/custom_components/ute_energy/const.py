@@ -1,4 +1,4 @@
-"""Constantes para la integración UTE Energy."""
+"""Constantes para la integración UTE Uruguay."""
 from __future__ import annotations
 
 DOMAIN = "ute_energy"

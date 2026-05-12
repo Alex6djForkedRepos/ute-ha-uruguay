@@ -54,10 +54,16 @@ async def async_setup_entry(
             # Horario pico (solo si hay datos: TRD/TRT)
             if sd.peak_window:
                 entities.append(_PeakWindowSensor(coordinator, account_id, sd))
+            # Calidad y status admin son por servicio (varían con el depto).
+            entities.append(_QualityDepartmentSensor(coordinator, account_id, sd))
+            entities.append(_AdminStatusSensor(coordinator, account_id, sd))
         entities.append(_DebtSensor(coordinator, account_id))
         entities.append(_BillingSpendingSensor(coordinator, account_id))
         entities.append(_BillingConsumptionSensor(coordinator, account_id))
         entities.append(_UnpaidCountSensor(coordinator, account_id))
+        # Métricas nacionales (% renovable, calidad país): 1 sensor por cuenta.
+        entities.append(_RenewableSensor(coordinator, account_id))
+        entities.append(_QualityGlobalSensor(coordinator, account_id))
         if account_id in coordinator.data.last_invoice_by_account:
             entities.append(_LastInvoiceSensor(coordinator, account_id))
         for sd in services:
@@ -67,6 +73,17 @@ async def async_setup_entry(
                         _DeviceSensor(coordinator, account_id, sd, dev, desc)
                     )
     async_add_entities(entities)
+
+
+def _parse_pct(s: str) -> float | None:
+    """Convierte '99,5 %' → 99.5. Devuelve None si no parsea."""
+    if not s:
+        return None
+    cleaned = s.replace("%", "").replace(",", ".").strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -312,6 +329,139 @@ class _LastInvoiceSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
         }
 
 
+class _RenewableSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """% de generación nacional desde fuentes renovables (último mes).
+
+    Es info nacional: 1 sensor por cuenta, no por servicio.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "renewable_sources"
+    _attr_name = "% renovable (UTE nacional)"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:leaf"
+    _attr_entity_registry_enabled_default = False  # info-only, opt-in
+
+    def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._attr_unique_id = f"{account_id}_renewable"
+        sd_first = next(
+            iter(coordinator.data.services_by_account.get(account_id, [])), None
+        )
+        self._attr_device_info = (
+            _device_info(account_id, sd_first) if sd_first else None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        return _parse_pct(
+            self.coordinator.data.renewable_by_account.get(self._account_id, "")
+        )
+
+
+class _QualityGlobalSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Calidad global del servicio UTE (%).
+
+    Es info nacional: 1 sensor por cuenta, no por servicio.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "quality_global"
+    _attr_name = "Calidad servicio (país)"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gauge"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._attr_unique_id = f"{account_id}_quality_global"
+        sd_first = next(
+            iter(coordinator.data.services_by_account.get(account_id, [])), None
+        )
+        self._attr_device_info = (
+            _device_info(account_id, sd_first) if sd_first else None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        return _parse_pct(
+            self.coordinator.data.quality_global_by_account.get(self._account_id, "")
+        )
+
+
+class _QualityDepartmentSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Calidad del servicio en el departamento del suministro (%)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "quality_department"
+    _attr_name = "Calidad servicio (depto)"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gauge"
+
+    def __init__(
+        self, coordinator: UteCoordinator, account_id: str, sd: _ServiceData
+    ) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._service_point_id = sd.service.service_point_id
+        self._attr_unique_id = f"{account_id}_{sd.service.service_point_id}_quality_dept"
+        self._attr_device_info = _device_info(account_id, sd)
+
+    def _current_sd(self) -> _ServiceData | None:
+        for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
+            if sd.service.service_point_id == self._service_point_id:
+                return sd
+        return None
+
+    @property
+    def native_value(self) -> Any:
+        sd = self._current_sd()
+        return _parse_pct(sd.quality_department) if sd else None
+
+
+class _AdminStatusSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
+    """Status admin del servicio: code "0" = OK, ≠"0" = aviso/incidencia."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "admin_status"
+    _attr_name = "Estado del servicio"
+    _attr_icon = "mdi:information"
+
+    def __init__(
+        self, coordinator: UteCoordinator, account_id: str, sd: _ServiceData
+    ) -> None:
+        super().__init__(coordinator)
+        self._account_id = account_id
+        self._service_point_id = sd.service.service_point_id
+        self._attr_unique_id = f"{account_id}_{sd.service.service_point_id}_admin_status"
+        self._attr_device_info = _device_info(account_id, sd)
+
+    def _current_sd(self) -> _ServiceData | None:
+        for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
+            if sd.service.service_point_id == self._service_point_id:
+                return sd
+        return None
+
+    @property
+    def native_value(self) -> Any:
+        sd = self._current_sd()
+        if not sd:
+            return None
+        return "OK" if sd.status_code == "0" else (sd.status_description or sd.status_code)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        sd = self._current_sd()
+        if not sd:
+            return {}
+        return {"code": sd.status_code, "description": sd.status_description}
+
+
 class _UnpaidCountSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "unpaid_invoices"
@@ -400,7 +550,7 @@ class _DeviceSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
         self._service_point_id = sd.service.service_point_id
         self._device_id = dev.device_id
         self._attr_unique_id = f"{account_id}_{dev.device_id}_{desc.key}"
-        self._attr_device_info = _shelly_device_info(account_id, sd, dev)
+        self._attr_device_info = _shelly_device_info(coordinator, account_id, sd, dev)
 
     def _current_dev(self) -> _DeviceData | None:
         for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
@@ -439,15 +589,20 @@ def _device_info(account_id: str, sd: _ServiceData) -> DeviceInfo:
 
 
 def _shelly_device_info(
-    account_id: str, sd: _ServiceData, dev: _DeviceData
+    coordinator: UteCoordinator,
+    account_id: str,
+    sd: _ServiceData,
+    dev: _DeviceData,
 ) -> DeviceInfo:
+    label = coordinator.data.device_category_labels.get(str(dev.category_id))
+    model = label or f"Categoría {dev.category_id}"
     return DeviceInfo(
         # account_id en el identifier evita colisión cross-account dentro de
         # un mismo HA con dos suministros UTE distintos.
         identifiers={(DOMAIN, f"shelly:{account_id}:{dev.device_id}")},
         name=dev.name,
         manufacturer="Shelly (vía UTE)",
-        model=f"Categoría {dev.category_id}",
+        model=model,
         via_device=(DOMAIN, f"{account_id}:{sd.service.service_point_id}"),
         configuration_url="https://rocme.ute.com.uy/customersapp",
     )

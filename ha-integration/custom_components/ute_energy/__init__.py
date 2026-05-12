@@ -1,4 +1,4 @@
-"""Integración UTE Energy para Home Assistant."""
+"""Integración UTE Uruguay para Home Assistant."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +16,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Configurar entry de UTE Energy."""
+    """Configurar entry de UTE Uruguay."""
     coordinator = UteCoordinator(
         hass,
         entry.data[CONF_DOCUMENT],

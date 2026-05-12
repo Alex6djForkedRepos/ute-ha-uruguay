@@ -50,7 +50,7 @@ class _DeviceBinaryBase(CoordinatorEntity[UteCoordinator], BinarySensorEntity):
         self._service_point_id = sd.service.service_point_id
         self._device_id = dev.device_id
         self._attr_unique_id = f"{account_id}_{dev.device_id}_{unique_suffix}"
-        self._attr_device_info = _shelly_device_info(account_id, sd, dev)
+        self._attr_device_info = _shelly_device_info(coordinator, account_id, sd, dev)
 
     def _current_dev(self) -> _DeviceData | None:
         for sd in self.coordinator.data.services_by_account.get(self._account_id, []):
@@ -68,11 +68,23 @@ class _DeviceBinaryBase(CoordinatorEntity[UteCoordinator], BinarySensorEntity):
 
 
 class _DeviceOnBinarySensor(_DeviceBinaryBase):
-    """Estado on/off del relé del Shelly."""
+    """Indica si el aparato está consumiendo en este momento.
+
+    UTE expone `isDeviceOn` (comando que UTE le manda al Shelly) y
+    `instantConsumption` (medición real del consumo). Como la app no
+    controla el Shelly, `isDeviceOn` es siempre `false` aunque el aparato
+    esté efectivamente prendido. La señal fiable es el consumo > umbral.
+
+    Atributo extra `ute_command_on` deja visible la otra señal por si UTE
+    cambia su semántica en el futuro.
+    """
 
     _attr_translation_key = "device_on"
-    _attr_name = "Encendido"
+    _attr_name = "Consumiendo"
     _attr_device_class = BinarySensorDeviceClass.POWER
+
+    # Umbral para distinguir consumo real de standby/ruido de medición.
+    _CONSUMPTION_THRESHOLD_W = 5.0
 
     def __init__(
         self,
@@ -86,7 +98,22 @@ class _DeviceOnBinarySensor(_DeviceBinaryBase):
     @property
     def is_on(self) -> bool | None:
         d = self._current_dev()
-        return d.is_device_on if d else None
+        if not d:
+            return None
+        return (
+            d.instant_consumption_w > self._CONSUMPTION_THRESHOLD_W
+            or d.is_device_on
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._current_dev()
+        if not d:
+            return {}
+        return {
+            "ute_command_on": d.is_device_on,
+            "instant_consumption_w": d.instant_consumption_w,
+        }
 
 
 class _DeviceBypassBinarySensor(_DeviceBinaryBase):

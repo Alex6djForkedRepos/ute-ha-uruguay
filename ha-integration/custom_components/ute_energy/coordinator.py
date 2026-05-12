@@ -42,6 +42,12 @@ class _ServiceData:
     is_interrupted: bool = False
     peak_window: str = ""  # ej. "17:00 a 21:00"
     devices: list[_DeviceData] = field(default_factory=list)
+    # Calidad de servicio del departamento (varía por servicePoint).
+    # Viene como string "99,9 %"; conversión a float en el sensor.
+    quality_department: str = ""
+    # Status admin del servicio: "0" cuando todo OK; description suele ser null.
+    status_code: str = ""
+    status_description: str | None = None
 
     @property
     def plan_code(self) -> str:
@@ -76,6 +82,14 @@ class UteData:
     unpaid_count_by_account: dict[str, int] = field(default_factory=dict)
     billing_period_by_account: dict[str, _BillingPeriod] = field(default_factory=dict)
     last_invoice_by_account: dict[str, _LastInvoice] = field(default_factory=dict)
+    # Métricas nacionales devueltas por la API quality. Las agrupamos por
+    # cuenta (no por servicio) porque su valor no depende del servicePoint
+    # — UTE las repite igual en cada llamada. Strings tipo "99,5 %".
+    renewable_by_account: dict[str, str] = field(default_factory=dict)
+    quality_global_by_account: dict[str, str] = field(default_factory=dict)
+    # categoryId → label legible (ej. "1" → "Termotanque"). Cache static
+    # del catálogo UTE; se refresca cuando vuelve vacío.
+    device_category_labels: dict[str, str] = field(default_factory=dict)
 
 
 class UteCoordinator(DataUpdateCoordinator[UteData]):
@@ -112,10 +126,26 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
             await self.async_login()
 
         data = UteData()
+        # Cache del scan previo para no perder labels si la llamada falla.
+        prev = self.data
+        if prev:
+            data.device_category_labels = dict(prev.device_category_labels)
         try:
             today = date.today()
             start = today.replace(day=1).isoformat()
             end = today.isoformat()
+
+            # Catálogo de categorías: cargar una vez por sesión. Es estático
+            # (no cambia entre cuentas), así que con una llamada alcanza.
+            if not data.device_category_labels:
+                try:
+                    cats = await self._client.device_categories()
+                    data.device_category_labels = {
+                        str(c.get("categoryId")): str(c.get("description") or "")
+                        for c in cats
+                    }
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.debug("device_categories failed: %s", e)
 
             for acc in await self._client.accounts():
                 data.accounts[acc.account_id] = {
@@ -186,6 +216,36 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                         acc.account_id, svc.service_agreement_id, svc.service_point_id
                     )
                     sd.is_interrupted = bool(status.get("isInterrupted"))
+                    # Calidad de servicio + % renovable.
+                    # globalServiceQuality y renewableSources son nacionales:
+                    # los guardamos a nivel cuenta (basta con el primer
+                    # servicio que responda). departmentServiceQuality varía
+                    # por depto → se queda en el _ServiceData.
+                    try:
+                        quality = await self._client.service_quality(
+                            acc.account_id, svc.service_agreement_id
+                        )
+                        sd.quality_department = str(
+                            quality.get("departmentServiceQuality") or ""
+                        )
+                        if not data.renewable_by_account.get(acc.account_id):
+                            data.renewable_by_account[acc.account_id] = str(
+                                (quality.get("demand") or {}).get("renewableSources") or ""
+                            )
+                        if not data.quality_global_by_account.get(acc.account_id):
+                            data.quality_global_by_account[acc.account_id] = str(
+                                quality.get("globalServiceQuality") or ""
+                            )
+                    except Exception as e:  # noqa: BLE001
+                        _LOGGER.debug("service_quality failed: %s", e)
+                    try:
+                        status_short = await self._client.service_status_short(
+                            acc.account_id, svc.service_agreement_id
+                        )
+                        sd.status_code = str(status_short.get("code") or "")
+                        sd.status_description = status_short.get("description")
+                    except Exception as e:  # noqa: BLE001
+                        _LOGGER.debug("service_status_short failed: %s", e)
                     # Listar Shellys del servicePoint y obtener status en vivo
                     try:
                         dev_resp = await self._client.devices(svc.service_point_id)

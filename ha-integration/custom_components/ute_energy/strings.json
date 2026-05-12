@@ -36,10 +36,14 @@
       "device_power": { "name": "Potencia instantánea" },
       "device_voltage": { "name": "Voltaje" },
       "device_rssi": { "name": "RSSI" },
-      "device_consumption_share": { "name": "Porcentaje del consumo total" }
+      "device_consumption_share": { "name": "Porcentaje del consumo total" },
+      "renewable_sources": { "name": "% renovable (UTE nacional)" },
+      "quality_global": { "name": "Calidad servicio (país)" },
+      "quality_department": { "name": "Calidad servicio (depto)" },
+      "admin_status": { "name": "Estado del servicio" }
     },
     "binary_sensor": {
-      "device_on": { "name": "Encendido" },
+      "device_on": { "name": "Consumiendo" },
       "device_bypass": { "name": "Bypass" },
       "device_schedule_active": { "name": "Programación activa" }
     }
