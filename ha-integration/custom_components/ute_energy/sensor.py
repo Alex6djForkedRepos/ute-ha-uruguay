@@ -75,11 +75,18 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _parse_pct(s: str) -> float | None:
-    """Convierte '99,5 %' → 99.5. Devuelve None si no parsea."""
+def _parse_pct(s: str | None) -> float | None:
+    """Convierte '99,5 %' / '22%' / '22 %' → float. None si no parsea.
+
+    UTE mezcla formatos: porcentajes de calidad usan coma decimal y sufijo
+    " %" (ej. "99,5 %"); porcentajes de share usan punto sin espacio
+    (ej. "22%"). Esta función absorbe ambos.
+    """
     if not s:
         return None
     cleaned = s.replace("%", "").replace(",", ".").strip()
+    if not cleaned:
+        return None
     try:
         return float(cleaned)
     except ValueError:
@@ -210,6 +217,7 @@ class _DebtSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
     _attr_translation_key = "total_debt"
     _attr_name = "Deuda total"
     _attr_native_unit_of_measurement = "UYU"
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
@@ -233,6 +241,7 @@ class _BillingSpendingSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
     _attr_translation_key = "billing_spending"
     _attr_name = "Importe estimado del período"
     _attr_native_unit_of_measurement = "UYU"
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(self, coordinator: UteCoordinator, account_id: str) -> None:
@@ -298,6 +307,7 @@ class _LastInvoiceSensor(CoordinatorEntity[UteCoordinator], SensorEntity):
     _attr_translation_key = "last_invoice"
     _attr_name = "Última factura"
     _attr_native_unit_of_measurement = "UYU"
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:receipt"
 
@@ -526,7 +536,8 @@ _DEVICE_SENSORS: tuple[_DeviceSensorDesc, ...] = (
         translation_key="device_consumption_share",
         name="Porcentaje del consumo total",
         icon="mdi:chart-pie",
-        value_fn=lambda d: d.percentage_of_total_consumption.rstrip("%") or None,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _parse_pct(d.percentage_of_total_consumption),
         native_unit_of_measurement="%",
     ),
 )

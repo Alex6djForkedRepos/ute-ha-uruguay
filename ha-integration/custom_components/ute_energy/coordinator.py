@@ -145,7 +145,7 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                         for c in cats
                     }
                 except Exception as e:  # noqa: BLE001
-                    _LOGGER.debug("device_categories failed: %s", e)
+                    _LOGGER.warning("device_categories failed: %s", e)
 
             for acc in await self._client.accounts():
                 data.accounts[acc.account_id] = {
@@ -157,7 +157,9 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                 try:
                     unpaid = await self._client.unpaid_invoices(acc.account_id)
                 except Exception as e:  # noqa: BLE001 — log y fallback
-                    _LOGGER.debug("unpaid_invoices failed: %s", e)
+                    _LOGGER.warning(
+                        "unpaid_invoices failed for account %s: %s", acc.account_id, e
+                    )
                     unpaid = {"totalDebt": 0, "billsUnpaid": []}
                 data.total_debt_by_account[acc.account_id] = float(
                     unpaid.get("totalDebt") or 0
@@ -178,15 +180,42 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                             total_amount=float(inv.get("totalAmount") or 0),
                             has_debt=bool(inv.get("hasDebt")),
                         )
+                    elif prev and acc.account_id in prev.last_invoice_by_account:
+                        # Cache del scan previo si la API devolvió lista vacía.
+                        data.last_invoice_by_account[acc.account_id] = (
+                            prev.last_invoice_by_account[acc.account_id]
+                        )
                 except Exception as e:  # noqa: BLE001
-                    _LOGGER.debug("invoices_history failed: %s", e)
-                summary = await self._client.billing_period_summary(acc.account_id)
-                data.billing_period_by_account[acc.account_id] = _BillingPeriod(
-                    initial_date=summary.initial_date,
-                    final_date=summary.final_date,
-                    spending_uyu=summary.current_spending_uyu,
-                    consumption_kwh=summary.current_consumption_kwh,
-                )
+                    _LOGGER.warning(
+                        "invoices_history failed for account %s: %s",
+                        acc.account_id,
+                        e,
+                    )
+                    if prev and acc.account_id in prev.last_invoice_by_account:
+                        data.last_invoice_by_account[acc.account_id] = (
+                            prev.last_invoice_by_account[acc.account_id]
+                        )
+                # billing_period: si UTE devuelve 204/vacío para clientes nuevos
+                # o falla transitoriamente, mantener el valor anterior en lugar
+                # de tirar UpdateFailed (que marca TODO unavailable).
+                try:
+                    summary = await self._client.billing_period_summary(acc.account_id)
+                    data.billing_period_by_account[acc.account_id] = _BillingPeriod(
+                        initial_date=summary.initial_date,
+                        final_date=summary.final_date,
+                        spending_uyu=summary.current_spending_uyu,
+                        consumption_kwh=summary.current_consumption_kwh,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "billing_period_summary failed for account %s: %s",
+                        acc.account_id,
+                        e,
+                    )
+                    if prev and acc.account_id in prev.billing_period_by_account:
+                        data.billing_period_by_account[acc.account_id] = (
+                            prev.billing_period_by_account[acc.account_id]
+                        )
                 services: list[_ServiceData] = []
                 for svc in await self._client.services(acc.account_id):
                     sd = _ServiceData(service=svc)
@@ -211,7 +240,11 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                                 or ""
                             )
                         except Exception as e:  # noqa: BLE001
-                            _LOGGER.debug("peak_window failed: %s", e)
+                            _LOGGER.warning(
+                                "peak_window failed for sa=%s: %s",
+                                svc.service_agreement_id,
+                                e,
+                            )
                     status = await self._client.supply_status(
                         acc.account_id, svc.service_agreement_id, svc.service_point_id
                     )
@@ -237,7 +270,11 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                                 quality.get("globalServiceQuality") or ""
                             )
                     except Exception as e:  # noqa: BLE001
-                        _LOGGER.debug("service_quality failed: %s", e)
+                        _LOGGER.warning(
+                            "service_quality failed for sa=%s: %s",
+                            svc.service_agreement_id,
+                            e,
+                        )
                     try:
                         status_short = await self._client.service_status_short(
                             acc.account_id, svc.service_agreement_id
@@ -245,7 +282,11 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                         sd.status_code = str(status_short.get("code") or "")
                         sd.status_description = status_short.get("description")
                     except Exception as e:  # noqa: BLE001
-                        _LOGGER.debug("service_status_short failed: %s", e)
+                        _LOGGER.warning(
+                            "service_status_short failed for sa=%s: %s",
+                            svc.service_agreement_id,
+                            e,
+                        )
                     # Listar Shellys del servicePoint y obtener status en vivo
                     try:
                         dev_resp = await self._client.devices(svc.service_point_id)
@@ -268,11 +309,19 @@ class UteCoordinator(DataUpdateCoordinator[UteData]):
                                 dd.percentage_of_total_consumption = (
                                     ds.percentage_of_total_consumption
                                 )
-                            except Exception as e:  # pragma: no cover
-                                _LOGGER.debug("device_status failed: %s", e)
+                            except Exception as e:  # noqa: BLE001
+                                _LOGGER.warning(
+                                    "device_status failed for device=%s: %s",
+                                    dev.device_id,
+                                    e,
+                                )
                             sd.devices.append(dd)
-                    except Exception as e:  # pragma: no cover
-                        _LOGGER.debug("devices list failed: %s", e)
+                    except Exception as e:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "devices list failed for sp=%s: %s",
+                            svc.service_point_id,
+                            e,
+                        )
                     services.append(sd)
                 data.services_by_account[acc.account_id] = services
         except UteAuthError as e:
